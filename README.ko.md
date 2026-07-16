@@ -33,11 +33,27 @@
 
 ## 설치
 
+### Homebrew
+
+```sh
+brew install zkzofn/tap/pier
+pier setup
+```
+
+### 소스 빌드
+
 ```sh
 git clone https://github.com/zkzofn/pier.git
 cd pier
-make install        # → ~/.local/bin/pier
+make setup          # 빌드 + ~/.local/bin 설치 + pier setup
 ```
+
+`pier setup`은 `~/.tmux.conf`에 마커 블록을 추가하고 `~/.claude/settings.json`에
+hook 4종을 병합한다 — 기존 설정은 보존되고 `.bak-pier` 백업을 먼저 남긴다.
+재실행해도 중복되지 않으며, tmux 서버가 떠 있으면 즉시 리로드까지 한다.
+
+<details>
+<summary>수동 설정 — <code>pier setup</code>이 하는 일</summary>
 
 ### 1. tmux 설정
 
@@ -75,6 +91,8 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 ```
 
 hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘만 `·`(미확인)으로 남는다.
+
+</details>
 
 ## 사용법
 
