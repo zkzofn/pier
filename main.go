@@ -1,0 +1,96 @@
+// pier — a tmux sidebar dashboard for running Claude Code sessions.
+package main
+
+import (
+	"fmt"
+	"io"
+	"os"
+
+	"pier/internal/discover"
+	"pier/internal/state"
+	"pier/internal/tmux"
+	"pier/internal/ui"
+)
+
+const version = "0.2.0"
+
+const usageText = `pier %s — tmux sidebar for Claude Code sessions
+
+usage:
+  pier run                  run the sidebar TUI (inside a tmux pane)
+  pier ensure [-t session]  create the sidebar in a session if missing
+  pier toggle [-t session]  toggle the sidebar pane
+  pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
+                              events: user-prompt-submit | pre-tool-use |
+                                      stop | permission-request
+  pier status <path>        print "path ⎇ branch" for tmux status-right
+  pier version              print version
+`
+
+func usage() {
+	fmt.Fprintf(os.Stderr, usageText, version)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
+	}
+	var err error
+	switch os.Args[1] {
+	case "run":
+		err = ui.Run()
+	case "ensure":
+		err = tmux.EnsureSidebar(targetSession(), self())
+	case "toggle":
+		err = tmux.ToggleSidebar(targetSession(), self())
+	case "hook":
+		if len(os.Args) < 3 {
+			usage()
+			os.Exit(2)
+		}
+		var payload []byte
+		payload, _ = io.ReadAll(os.Stdin)
+		err = state.Record(state.Dir(), os.Args[2], payload)
+	case "status":
+		if len(os.Args) < 3 {
+			usage()
+			os.Exit(2)
+		}
+		fmt.Print(statusLine(os.Args[2]))
+	case "version", "--version", "-v":
+		fmt.Println(version)
+	default:
+		usage()
+		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pier:", err)
+		os.Exit(1)
+	}
+}
+
+func targetSession() string {
+	if len(os.Args) >= 4 && os.Args[2] == "-t" {
+		return os.Args[3]
+	}
+	return tmux.CurrentSession()
+}
+
+func self() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "pier"
+	}
+	return exe
+}
+
+// statusLine renders a colored "path ⎇ branch" fragment for tmux status-right.
+func statusLine(path string) string {
+	short := discover.ShortPath(path)
+	branch := discover.GitBranch(path)
+	if branch == "-" {
+		return fmt.Sprintf("#[fg=cyan]%s#[default]", short)
+	}
+	return fmt.Sprintf("#[fg=cyan]%s #[fg=green]⎇ %s#[default]", short, branch)
+}
