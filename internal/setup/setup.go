@@ -19,6 +19,9 @@ const (
 // Run configures tmux and Claude Code for the pier binary at `self`,
 // printing a one-line result per target.
 func Run(self string) error {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return fmt.Errorf("tmux not found in PATH — install it first (e.g. `brew install tmux`), then re-run `pier setup`")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err

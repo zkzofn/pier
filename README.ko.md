@@ -27,8 +27,9 @@
 
 ## 요구사항
 
-- tmux 3.2+ (3.6a에서 개발·검증)
-- Go 1.24+ (빌드용)
+- [Claude Code](https://claude.com/claude-code) — 이 대시보드가 보여주는 대상
+- tmux 3.2+ (3.6a에서 개발·검증; Homebrew 설치 시 자동으로 함께 설치됨)
+- Go 1.24+는 소스 빌드 시에만 — Homebrew는 프리빌트 바이너리 제공
 - macOS에서 개발·검증. Linux는 이론상 동작하나 미검증
 
 ## 설치
