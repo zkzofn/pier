@@ -1,35 +1,37 @@
 # Pier
 
-**tmux 안에서 쓰는 Claude Code 세션 대시보드.** 세션들이 정박하는 부두(pier).
-지금 어떤 Claude Code 세션들이 돌고 있는지, 어느 워크트리·브랜치에서, 어떤 상태(작업중/입력대기)인지 사이드바로 보여주고, 클릭 한 번으로 그 세션에 점프한다. 쓰던 tmux 워크플로를 그대로 유지하면서, 사이드바 하나당 **8MB**로.
+[한국어](README.ko.md)
+
+**A tmux sidebar dashboard for Claude Code sessions.** A pier where your sessions dock.
+See every running Claude Code session at a glance — which worktree and branch each one is on, whether it's working or waiting for you — and jump to any of them with a single click. Your tmux workflow stays exactly as it is, at **8 MB** per sidebar.
 
 ```
 ┌──────────────────────┬─────────────────────────────────────┐
 │ Pier — CC sessions   │                                     │
 │                      │                                     │
 │ suite2 ⎇ feat/nmt    │                                     │
-│  ● 결제 모듈 리팩토링  │        Claude Code (main pane)      │
+│  ● Refactor payments │        Claude Code (main pane)      │
 │ suite3 ⎇ dev         │                                     │
 │  ○ suite3            │                                     │
 │ terminal ⎇ -         │                                     │
-│  ● Tmux 대시보드 개발 ◀│                                     │
+│  ● Build tmux dash ◀ │                                     │
 └──────────────────────┴─────────────────────────────────────┘
  [session]                      [~/dev/suite2 ⎇ feat/nmt 13:53]
 ```
 
-- **사이드바**: 실행 중인 모든 Claude Code 인스턴스를 워크트리(경로+브랜치)별로 그룹핑. 항목 이름은 대화의 AI 생성 제목(없으면 tmux 세션명)
-- **상태 아이콘**: `●` 작업중 / `○` 입력 대기 / `!` 권한 승인 대기 / `·` 미확인
-- **점프**: 항목을 마우스로 클릭 → 다른 tmux 세션이어도 바로 전환
-- **status bar**: 우측에 현재 pane의 경로 + git 브랜치 상시 표시 (detached HEAD는 `detached@sha`)
-- **자동 부착**: 세션에 attach하거나 전환하면 사이드바가 알아서 생긴다
+- **Sidebar**: every running Claude Code instance across all tmux sessions, grouped by worktree (path + branch). Items show the conversation's AI-generated title, falling back to the tmux session name
+- **Status icons**: `●` working / `○` waiting for your input / `!` waiting for permission approval / `·` unknown
+- **Jump**: click an item to focus it — even across tmux sessions
+- **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
+- **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
 
-## 요구사항
+## Requirements
 
-- tmux 3.2+ (3.6a에서 개발·검증)
-- Go 1.24+ (빌드용)
-- macOS에서 개발·검증. Linux는 이론상 동작하나 미검증
+- tmux 3.2+ (developed and verified on 3.6a)
+- Go 1.24+ (build only)
+- Developed and verified on macOS. Linux should work but is unverified.
 
-## 설치
+## Install
 
 ```sh
 git clone https://github.com/zkzofn/pier.git
@@ -37,9 +39,9 @@ cd pier
 make install        # → ~/.local/bin/pier
 ```
 
-### 1. tmux 설정
+### 1. tmux config
 
-`~/.tmux.conf`에 추가:
+Add to `~/.tmux.conf`:
 
 ```tmux
 set -g mouse on
@@ -47,19 +49,19 @@ set -g status-interval 5
 set -g status-right-length 60
 set -g status-right '#(~/.local/bin/pier status "#{pane_current_path}") %H:%M '
 
-# attach·세션 전환 시 사이드바 자동 생성 (이미 있으면 no-op)
+# Auto-create the sidebar on attach / session switch (no-op if it exists)
 set-hook -g client-attached 'run-shell "~/.local/bin/pier ensure"'
 set-hook -g client-session-changed 'run-shell "~/.local/bin/pier ensure"'
 
-# prefix + g : 사이드바 토글
+# prefix + g : toggle the sidebar
 bind-key g run-shell "~/.local/bin/pier toggle"
 ```
 
-적용: `tmux source-file ~/.tmux.conf`
+Apply with `tmux source-file ~/.tmux.conf`.
 
-### 2. Claude Code hooks (상태 아이콘용)
+### 2. Claude Code hooks (for status icons)
 
-`~/.claude/settings.json`의 `hooks`에 추가 (경로의 `<you>`를 수정):
+Add to `hooks` in `~/.claude/settings.json` (replace `<you>` in the paths):
 
 ```json
 {
@@ -72,56 +74,56 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 }
 ```
 
-hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘만 `·`(미확인)으로 남는다.
+Everything except the status icons — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
 
-## 사용법
+## Usage
 
-| 하고 싶은 것 | 방법 |
+| To do this | Do this |
 |---|---|
-| 다른 세션으로 점프 | 사이드바 항목 **클릭** |
-| 키보드로 점프 | 사이드바 pane으로 포커스 이동(`prefix+←`) 후 `j`/`k` + `Enter` |
-| 사이드바 열기/닫기 | `prefix + g`, 또는 `pier toggle` |
-| 강제 새로고침 | 사이드바에서 `r` |
-| 사이드바 종료 | 사이드바에서 `q` |
+| Jump to another session | **Click** the item in the sidebar |
+| Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
+| Show/hide the sidebar | `prefix + g`, or `pier toggle` |
+| Force refresh | `r` in the sidebar |
+| Quit the sidebar | `q` in the sidebar |
 
-키 입력은 tmux가 포커스된 pane으로 보내므로, `j`/`k`는 사이드바에 포커스가 있을 때만 동작한다. 일상 사용은 클릭이 기본이다.
+tmux delivers keystrokes to the focused pane, so `j`/`k` only work while the sidebar has focus. Clicking is the everyday path.
 
-## 동작 원리
+## How it works
 
 ```
-┌─ tmux 세션 (세션마다 사이드바 1개) ─────────────┐
+┌─ tmux session (one sidebar per session) ──────┐
 │ ┌────────┐  ┌──────────────────────────────┐  │
 │ │  pier  │  │  Claude Code                 │  │
 │ │  run   │  │                              │  │
 │ └───┬────┘  └──────────────┬───────────────┘  │
 └─────┼──────────────────────┼──────────────────┘
-      │ 2s 폴링:              │ hooks
+      │ poll every 2s:       │ hooks
       │ tmux list-panes -a   ▼
       │◀─ fsnotify ── ~/.local/state/pier/panes/<pane>.json
 ```
 
-- **진실의 원천은 tmux.** 2초마다 `list-panes -a`를 폴링해 Claude Code pane을 판별한다(프로세스명이 `claude` 또는 버전 문자열 `2.1.206` 형태). 상태 파일은 장식일 뿐이라 hook이 죽어도 목록은 항상 정확하다.
-- **상태는 CC hooks가 기록.** `pier hook <event>`는 CC의 자식 프로세스로 실행되어 `$TMUX_PANE`을 상속받으므로 pane과 정확히 매핑된다. TUI는 fsnotify로 즉시 반영한다.
-- **대화 제목**: hook payload의 session id로 `~/.claude/projects/*/<id>.jsonl`의 `ai-title` 레코드를 읽는다.
+- **tmux is the source of truth.** Every 2 seconds the sidebar polls `list-panes -a` and detects Claude Code panes (process name `claude`, or a version string like `2.1.206`). State files are decoration only — even if the hooks die, the list stays correct.
+- **Status is recorded by Claude Code hooks.** `pier hook <event>` runs as a child of Claude Code, so it inherits `$TMUX_PANE` and maps to the exact pane. The TUI picks changes up instantly via fsnotify.
+- **Conversation titles** are read from the `ai-title` record in `~/.claude/projects/*/<session-id>.jsonl`, resolved from the hook payload's session id.
 
-## 메모리 사용량 (실측)
+## Memory usage (measured)
 
-macOS(Apple Silicon), RSS 기준. 사이드바는 tmux 구조상 세션마다 1개씩 뜬다.
+macOS (Apple Silicon), RSS. tmux's model means one sidebar per session.
 
-| 항목 | 측정값 |
+| Item | Measured |
 |---|---|
-| 사이드바 1개 | 7.1 ~ 9.7 MB (평균 8.1 MB) |
-| 세션 6개 운영 시 합계 | 48.8 MB |
-| `pier hook` / `pier status` | 상주 없음 (이벤트당 수 ms 단발 실행) |
-| 바이너리 크기 | 5 MB |
+| One sidebar | 7.1 – 9.7 MB (avg 8.1 MB) |
+| Total with 6 sessions | 48.8 MB |
+| `pier hook` / `pier status` | No resident process (a few ms per event) |
+| Binary size | 5 MB |
 
-## 트러블슈팅
+## Troubleshooting
 
-- **사이드바가 죽어 있음** → `prefix + g` 두 번 (제거 후 재생성)
-- **discover가 뭘 보는지 확인** → `go run ./cmd/dbg`
-- **마우스 텍스트 선택이 안 됨** → `mouse on`의 트레이드오프. iTerm2는 `Option+드래그`로 네이티브 선택
-- **상태 아이콘이 전부 `·`** → hooks 미설정이거나, 떠 있던 CC 세션이 아직 새 프롬프트를 받지 않은 상태. 다음 프롬프트부터 기록된다
+- **Sidebar pane is dead** → `prefix + g` twice (kill, then recreate)
+- **See what discovery sees** → `go run ./cmd/dbg`
+- **Mouse text selection stopped working** → the `mouse on` trade-off; in iTerm2 use `Option+drag` for native selection
+- **All status icons are `·`** → hooks not configured, or a long-running CC session hasn't received a new prompt since the hooks were added — recording starts with the next prompt
 
-## 라이선스
+## License
 
 MIT
