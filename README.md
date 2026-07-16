@@ -27,8 +27,9 @@ See every running Claude Code session at a glance — which worktree and branch 
 
 ## Requirements
 
-- tmux 3.2+ (developed and verified on 3.6a)
-- Go 1.24+ (build only)
+- [Claude Code](https://claude.com/claude-code) — the thing being dashboarded
+- tmux 3.2+ (developed and verified on 3.6a; installed automatically with Homebrew)
+- Go 1.24+ only when building from source — the Homebrew install ships a prebuilt binary
 - Developed and verified on macOS. Linux should work but is unverified.
 
 ## Install
