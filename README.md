@@ -33,11 +33,28 @@ See every running Claude Code session at a glance — which worktree and branch 
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install zkzofn/tap/pier
+pier setup
+```
+
+### From source
+
 ```sh
 git clone https://github.com/zkzofn/pier.git
 cd pier
-make install        # → ~/.local/bin/pier
+make setup          # build + install to ~/.local/bin + pier setup
 ```
+
+`pier setup` appends a marked block to `~/.tmux.conf` and merges four hook
+entries into `~/.claude/settings.json` — existing settings are preserved and a
+`.bak-pier` backup is written first. Re-running it never duplicates anything.
+If a tmux server is running, the config is reloaded on the spot.
+
+<details>
+<summary>Manual setup — exactly what <code>pier setup</code> does</summary>
 
 ### 1. tmux config
 
@@ -75,6 +92,8 @@ Add to `hooks` in `~/.claude/settings.json` (replace `<you>` in the paths):
 ```
 
 Everything except the status icons — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
+
+</details>
 
 ## Usage
 
