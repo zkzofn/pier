@@ -102,7 +102,7 @@ Everything except the status icons — sidebar, jump, status bar — works witho
 | To do this | Do this |
 |---|---|
 | Jump to another session | **Click** the item in the sidebar |
-| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `Tab` to edit the proposed name. Picking an already-open path jumps to it instead |
+| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
 | Force refresh | `r` in the sidebar |

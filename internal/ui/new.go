@@ -139,6 +139,13 @@ func (m pickerModel) confirm(i int) (tea.Model, tea.Cmd) {
 		name = newsess.Sanitize(strings.TrimSpace(m.name))
 	}
 	name = newsess.Unique(name, m.taken)
+	if cand.NeedsMkdir {
+		if err := os.MkdirAll(cand.Path, 0o755); err != nil {
+			mm := m
+			mm.errMsg = "mkdir: " + err.Error()
+			return mm, nil
+		}
+	}
 	if err := tmux.NewSessionAndSwitch(name, cand.Path); err != nil {
 		mm := m
 		mm.errMsg = err.Error()
@@ -268,6 +275,8 @@ func (m pickerModel) View() string {
 		cand := m.itemAt(i)
 		prefix, label := "  ", ""
 		switch {
+		case cand.Manual && cand.NeedsMkdir:
+			label = "+ mkdir & create at " + discover.ShortPath(cand.Path)
 		case cand.Manual:
 			label = "+ create at " + discover.ShortPath(cand.Path)
 		case cand.Open != "":
@@ -283,7 +292,7 @@ func (m pickerModel) View() string {
 		shown++
 	}
 	if m.itemCount() == 0 {
-		line("  " + styleHint.Render("no match — type an absolute path"))
+		line("  " + styleHint.Render("no match — type a ~/ or absolute path"))
 	}
 	line("")
 	if m.errMsg != "" {
