@@ -62,11 +62,18 @@ func TestManual(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := Manual(home, "~/proj.v2")
-	if c == nil || c.Path != sub || c.Name != "proj-v2" || !c.Manual {
+	if c == nil || c.Path != sub || c.Name != "proj-v2" || !c.Manual || c.NeedsMkdir {
 		t.Errorf("tilde manual candidate wrong: %+v", c)
 	}
-	if Manual(home, "~/missing") != nil {
-		t.Error("nonexistent dir must not produce a candidate")
+	if c := Manual(home, "~/missing/nested"); c == nil || !c.NeedsMkdir || c.Name != "nested" {
+		t.Errorf("nonexistent dir should be offered with NeedsMkdir: %+v", c)
+	}
+	file := filepath.Join(home, "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if Manual(home, "~/afile") != nil {
+		t.Error("existing file must not produce a candidate")
 	}
 	if Manual(home, "relative/path") != nil {
 		t.Error("relative paths are not accepted")

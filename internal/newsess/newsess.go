@@ -15,10 +15,11 @@ import (
 
 // Candidate is a directory a new session could start in.
 type Candidate struct {
-	Path   string
-	Name   string // proposed session name (directory base name, sanitized)
-	Open   string // non-empty: a session with this name/path is already running
-	Manual bool   // synthesized from the user's typed query
+	Path       string
+	Name       string // proposed session name (directory base name, sanitized)
+	Open       string // non-empty: a session with this name/path is already running
+	Manual     bool   // synthesized from the user's typed query
+	NeedsMkdir bool   // the typed path doesn't exist yet — create it first
 }
 
 // Collect gathers candidate directories: ~/dev/*, the home dir, and every
@@ -141,7 +142,9 @@ func Filter(cands []Candidate, query string) []Candidate {
 }
 
 // Manual interprets the query itself as a directory path ("~" expanded).
-// Returns nil when the query doesn't resolve to an existing directory.
+// A path that doesn't exist yet is still a candidate, flagged NeedsMkdir so
+// the picker creates the directory before the session. Existing non-directory
+// paths and relative paths are rejected.
 func Manual(home, query string) *Candidate {
 	if query == "" {
 		return nil
@@ -154,10 +157,19 @@ func Manual(home, query string) *Candidate {
 		return nil
 	}
 	path = filepath.Clean(path)
-	if fi, err := os.Stat(path); err != nil || !fi.IsDir() {
+	c := &Candidate{Path: path, Name: Sanitize(filepath.Base(path)), Manual: true}
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil && fi.IsDir():
+		return c
+	case err == nil:
+		return nil // exists but is a file
+	case os.IsNotExist(err):
+		c.NeedsMkdir = true
+		return c
+	default:
 		return nil
 	}
-	return &Candidate{Path: path, Name: Sanitize(filepath.Base(path)), Manual: true}
 }
 
 // Sanitize makes a name usable as a tmux session name ('.' and ':' are
