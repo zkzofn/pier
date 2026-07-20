@@ -27,7 +27,10 @@ var (
 	stylePath    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	styleBranch  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleCursor  = lipgloss.NewStyle().Reverse(true)
-	styleCurrent = lipgloss.NewStyle().Bold(true)
+	// Current session: full-row highlight so it pops at a glance.
+	styleCurrent = lipgloss.NewStyle().Bold(true).
+			Foreground(lipgloss.Color("15")).
+			Background(lipgloss.Color("30"))
 	styleDim     = lipgloss.NewStyle().Faint(true)
 	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 
@@ -99,6 +102,7 @@ func Run() error {
 	}
 	m := Model{
 		paneID:  os.Getenv("TMUX_PANE"),
+		cursor:  -1, // hidden until the first j/k — mouse is the primary path
 		session: tmux.CurrentSession(),
 		states:  map[string]state.PaneState{},
 		titles:  map[string]string{},
@@ -160,7 +164,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if pane := os.Getenv("TMUX_PANE"); pane != "" && msg.Width != tmux.SidebarWidth {
 			tmux.RestoreWidth(pane)
 		}
-		return m, nil
+		// A frame drawn during a transient width can wrap and leave ghost
+		// lines the renderer can't diff away — wipe them.
+		return m, tea.ClearScreen
 
 	case tickMsg:
 		return m, tea.Batch(refresh, tick())
@@ -200,7 +206,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "j", "down":
 			if m.cursor < len(m.items)-1 {
-				m.cursor++
+				m.cursor++ // from the hidden -1 this lands on the first item
 			}
 		case "k", "up":
 			if m.cursor > 0 {
@@ -279,10 +285,7 @@ func (m *Model) buildRows() {
 		m.rows = append(m.rows, row{kind: rowBlank, item: -1})
 	}
 	if m.cursor >= len(m.items) {
-		m.cursor = len(m.items) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
+		m.cursor = len(m.items) - 1 // may become -1 (hidden) when empty
 	}
 }
 
@@ -300,7 +303,15 @@ func (m Model) itemLabel(p tmux.Pane, dup bool) string {
 }
 
 func (m Model) View() string {
-	w := uint(m.width)
+	// Render against the fixed sidebar width, never a transient pane size —
+	// an over-wide line wraps in the 30-col pane and leaves ghost artifacts.
+	// The -1 guards ambiguous-width glyphs (●, ⎇) that some terminals draw
+	// wider than measured.
+	width := m.width
+	if width > tmux.SidebarWidth {
+		width = tmux.SidebarWidth
+	}
+	w := uint(width - 1)
 	var b strings.Builder
 	writeLine := func(s string) {
 		b.WriteString(truncate.StringWithTail(s, w, "…"))
@@ -345,7 +356,10 @@ func (m Model) View() string {
 			label := m.itemLabel(r.pane, dup)
 			line := "  " + iconR + " " + label
 			if r.pane.Session == m.session {
-				line = "  " + iconR + " " + styleCurrent.Render(label+" ◀")
+				// Full-width highlighted row with an edge bar. The icon is
+				// folded into the row style: nested renders would reset the
+				// background mid-line.
+				line = styleCurrent.Width(int(w)).Render("▌ " + icon + " " + label)
 			}
 			if r.item == m.cursor {
 				line = styleCursor.Render(strings.TrimRight(line, " "))
