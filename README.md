@@ -24,6 +24,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 - **Jump**: click an item to focus it — even across tmux sessions
 - **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
 - **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
+- **New session**: click `+ new session` (or press `n`) — pick a directory in a centered popup and a Claude Code session starts there, named after the directory
 
 ## Requirements
 
@@ -101,6 +102,7 @@ Everything except the status icons — sidebar, jump, status bar — works witho
 | To do this | Do this |
 |---|---|
 | Jump to another session | **Click** the item in the sidebar |
+| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `Tab` to edit the proposed name. Picking an already-open path jumps to it instead |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
 | Force refresh | `r` in the sidebar |

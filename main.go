@@ -13,13 +13,14 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.3.2"
+const version = "0.4.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
 usage:
   pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
   pier run                  run the sidebar TUI (inside a tmux pane)
+  pier new                  new-session picker (usually via the sidebar's "+")
   pier ensure [-t session]  create the sidebar in a session if missing
   pier toggle [-t session]  toggle the sidebar pane
   pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
@@ -44,6 +45,8 @@ func main() {
 		err = setup.Run(self())
 	case "run":
 		err = ui.Run()
+	case "new":
+		err = ui.RunNew()
 	case "ensure":
 		err = tmux.EnsureSidebar(targetSession(), self())
 	case "toggle":

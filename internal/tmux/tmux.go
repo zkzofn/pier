@@ -136,6 +136,49 @@ func PickMostRecentClient(listClientsOut, session string) string {
 	return best
 }
 
+// SessionNames returns the set of existing tmux session names.
+func SessionNames() map[string]bool {
+	names := map[string]bool{}
+	out, _ := run("list-sessions", "-F", "#{session_name}")
+	for _, s := range strings.Split(out, "\n") {
+		if s != "" {
+			names[s] = true
+		}
+	}
+	return names
+}
+
+// NewSessionAndSwitch creates a detached Claude Code session at path and
+// switches the current client to it. Inside a popup the current client is
+// the one hosting the popup — exactly who asked. A failed switch (headless
+// contexts have no client) is not an error: the session exists either way.
+func NewSessionAndSwitch(name, path string) error {
+	if _, err := run("new-session", "-d", "-s", name, "-c", path, "claude"); err != nil {
+		return err
+	}
+	_, _ = run("switch-client", "-t", name)
+	return nil
+}
+
+// SwitchTo focuses an existing session from the current client.
+func SwitchTo(session string) error {
+	_, err := run("switch-client", "-t", session)
+	return err
+}
+
+// OpenNewPopup opens the new-session picker as a centered popup on the
+// client that just interacted with our session.
+func OpenNewPopup(self, session string) error {
+	args := []string{"display-popup", "-E", "-w", "46", "-h", "18", "-T", " New CC session "}
+	out, _ := run("list-clients", "-F", "#{client_name}\t#{client_session}\t#{client_activity}")
+	if client := PickMostRecentClient(out, session); client != "" {
+		args = append(args, "-c", client)
+	}
+	args = append(args, self+" new")
+	_, err := run(args...)
+	return err
+}
+
 // sidebarPaneIn returns the pane id of an existing sidebar in the session.
 func sidebarPaneIn(session string) string {
 	out, _ := run("list-panes", "-s", "-t", session, "-F", "#{pane_id}\t#{@pier}")

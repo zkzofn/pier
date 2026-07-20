@@ -52,10 +52,13 @@ const (
 	rowBlank rowKind = iota
 	rowHeader
 	rowItem
+	rowNew  // the "+ new session" action line
+	rowInfo // plain informational text
 )
 
 type row struct {
 	kind rowKind
+	text string // rowInfo only
 	wt   discover.Worktree
 	pane tmux.Pane
 	item int // index into items when kind == rowItem, else -1
@@ -216,6 +219,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 		case "enter":
 			m.jump(m.cursor)
+		case "n":
+			return m, m.openPicker()
 		case "r":
 			return m, refresh
 		}
@@ -238,6 +243,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(r.wt.Instances) > 0 {
 				m.jumpPane(r.wt.Instances[0].ID)
 			}
+		case rowNew:
+			return m, m.openPicker()
 		}
 		return m, nil
 	}
@@ -284,8 +291,28 @@ func (m *Model) buildRows() {
 		}
 		m.rows = append(m.rows, row{kind: rowBlank, item: -1})
 	}
+	if len(m.items) == 0 {
+		m.rows = append(m.rows,
+			row{kind: rowInfo, text: " no claude sessions", item: -1},
+			row{kind: rowBlank, item: -1})
+	}
+	m.rows = append(m.rows, row{kind: rowNew, item: -1})
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1 // may become -1 (hidden) when empty
+	}
+}
+
+// openPicker launches the new-session popup on the interacting client and
+// refreshes when it closes.
+func (m Model) openPicker() tea.Cmd {
+	self, err := os.Executable()
+	if err != nil {
+		self = "pier"
+	}
+	session := m.session
+	return func() tea.Msg {
+		_ = tmux.OpenNewPopup(self, session)
+		return refresh()
 	}
 }
 
@@ -321,11 +348,6 @@ func (m Model) View() string {
 	// rows[0] is the reserved header line
 	writeLine(styleHeader.Render(" Pier — CC sessions"))
 
-	if len(m.items) == 0 {
-		writeLine("")
-		writeLine(styleDim.Render(" no claude sessions"))
-	}
-
 	rows := m.rows
 	if len(rows) > 0 {
 		rows = rows[1:] // first refresh may not have arrived yet
@@ -334,6 +356,10 @@ func (m Model) View() string {
 		switch r.kind {
 		case rowBlank:
 			writeLine("")
+		case rowNew:
+			writeLine("  " + styleBranch.Render("+") + styleDim.Render(" new session"))
+		case rowInfo:
+			writeLine(styleDim.Render(r.text))
 		case rowHeader:
 			name := filepath.Base(r.wt.Path)
 			writeLine(" " + stylePath.Render(name) + " " + styleBranch.Render("⎇ "+r.wt.Branch))
