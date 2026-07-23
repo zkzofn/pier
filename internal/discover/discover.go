@@ -53,6 +53,48 @@ func Group(panes []tmux.Pane, branch BranchFunc) []Worktree {
 	return wts
 }
 
+// SessionOrder returns unique session names in sidebar display order:
+// worktrees sorted by path, instances within a worktree by session name.
+func SessionOrder(wts []Worktree) []string {
+	seen := map[string]bool{}
+	var order []string
+	for _, wt := range wts {
+		for _, p := range wt.Instances {
+			if !seen[p.Session] {
+				seen[p.Session] = true
+				order = append(order, p.Session)
+			}
+		}
+	}
+	return order
+}
+
+// NextSession picks the session to land on after closing cur: the next one
+// in sidebar order (wrapping), else any other live session, else "".
+func NextSession(order, all []string, cur string) string {
+	for i, s := range order {
+		if s == cur {
+			if next := order[(i+1)%len(order)]; next != cur {
+				return next
+			}
+			break // cur is the only sidebar session
+		}
+	}
+	// cur not in the sidebar (or alone there): prefer the sidebar's first
+	// entry, then any other live session.
+	for _, s := range order {
+		if s != cur {
+			return s
+		}
+	}
+	for _, s := range all {
+		if s != cur {
+			return s
+		}
+	}
+	return ""
+}
+
 // GitBranch returns the current branch, "detached@<sha>" for detached HEAD,
 // or "-" outside a git repository.
 func GitBranch(path string) string {

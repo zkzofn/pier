@@ -166,6 +166,25 @@ func SwitchTo(session string) error {
 	return err
 }
 
+// KillSession kills a session by exact name ("=" disables prefix matching —
+// this one is destructive, "suite" must never match "suite2").
+func KillSession(session string) error {
+	_, err := run("kill-session", "-t", "="+session)
+	return err
+}
+
+// AllSessions returns session names in tmux list order.
+func AllSessions() []string {
+	out, _ := run("list-sessions", "-F", "#{session_name}")
+	var names []string
+	for _, s := range strings.Split(out, "\n") {
+		if s != "" {
+			names = append(names, s)
+		}
+	}
+	return names
+}
+
 // OpenNewPopup opens the new-session picker as a centered popup on the
 // client that just interacted with our session.
 func OpenNewPopup(self, session string) error {

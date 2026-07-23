@@ -79,3 +79,36 @@ func TestParsePanes(t *testing.T) {
 		t.Errorf("last pane with stripped trailing field wrong: %+v", panes[2])
 	}
 }
+
+func TestSessionOrderAndNext(t *testing.T) {
+	panes := []tmux.Pane{
+		{Session: "beta", ID: "%2", Command: "claude", Path: "/dev/b"},
+		{Session: "alpha", ID: "%1", Command: "claude", Path: "/dev/a"},
+		{Session: "alpha", ID: "%3", Command: "claude", Path: "/dev/a"}, // dup pane, same session
+		{Session: "gamma", ID: "%4", Command: "claude", Path: "/dev/c"},
+	}
+	order := SessionOrder(Group(panes, func(string) string { return "" }))
+	want := []string{"alpha", "beta", "gamma"}
+	if len(order) != 3 || order[0] != want[0] || order[1] != want[1] || order[2] != want[2] {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+
+	if got := NextSession(order, nil, "beta"); got != "gamma" {
+		t.Errorf("next after beta = %q, want gamma", got)
+	}
+	if got := NextSession(order, nil, "gamma"); got != "alpha" {
+		t.Errorf("next should wrap to alpha, got %q", got)
+	}
+	// Current session not in the sidebar: land on the sidebar's first.
+	if got := NextSession(order, []string{"zeta", "alpha"}, "zeta"); got != "alpha" {
+		t.Errorf("non-sidebar current should go to first sidebar session, got %q", got)
+	}
+	// No sidebar sessions: any other live session.
+	if got := NextSession(nil, []string{"only", "other"}, "only"); got != "other" {
+		t.Errorf("fallback to other live session, got %q", got)
+	}
+	// Alone: nothing to switch to.
+	if got := NextSession([]string{"solo"}, []string{"solo"}, "solo"); got != "" {
+		t.Errorf("alone should return empty, got %q", got)
+	}
+}
