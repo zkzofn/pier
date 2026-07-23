@@ -73,6 +73,9 @@ set-hook -g client-session-changed 'run-shell "~/.local/bin/pier ensure"'
 
 # prefix + g : 사이드바 토글
 bind-key g run-shell "~/.local/bin/pier toggle"
+
+# prefix + X : 현재 세션 종료 후 다음 세션으로 (사이드바 순서)
+bind-key X run-shell "~/.local/bin/pier done"
 ```
 
 적용: `tmux source-file ~/.tmux.conf`
@@ -105,6 +108,7 @@ hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 
 | 새 세션 생성 | `+ new session` 클릭(또는 사이드바 포커스에서 `n`). 타이핑으로 디렉토리 필터(`~/dev/*` + 과거 CC 사용 경로), `Enter` 생성, `Tab`으로 제안된 이름 수정. 없는 경로를 입력하면 `mkdir & create`로 디렉토리까지 만들어 진행, 이미 열린 경로를 고르면 생성 대신 점프 |
 | 키보드로 점프 | 사이드바 pane으로 포커스 이동(`prefix+←`) 후 `j`/`k` + `Enter` |
 | 사이드바 열기/닫기 | `prefix + g`, 또는 `pier toggle` |
+| 현재 세션 끝내기 | `prefix + X` (또는 `pier done`) — 세션을 종료하고 사이드바 순서상 다음 세션으로 점프. 다른 세션이 없으면 그냥 종료. 확인 절차 없이 즉시 kill |
 | 강제 새로고침 | 사이드바에서 `r` |
 | 사이드바 종료 | 사이드바에서 `q` |
 

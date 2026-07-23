@@ -74,6 +74,9 @@ set-hook -g client-session-changed 'run-shell "~/.local/bin/pier ensure"'
 
 # prefix + g : toggle the sidebar
 bind-key g run-shell "~/.local/bin/pier toggle"
+
+# prefix + X : kill the current session, jump to the next one (sidebar order)
+bind-key X run-shell "~/.local/bin/pier done"
 ```
 
 Apply with `tmux source-file ~/.tmux.conf`.
@@ -106,6 +109,7 @@ Everything except the status icons and prompt labels — sidebar, jump, status b
 | Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
+| Finish the current session | `prefix + X` (or `pier done`) — kills the session and jumps to the next one in sidebar order; with no other session it just exits. No confirmation — the kill is immediate |
 | Force refresh | `r` in the sidebar |
 | Quit the sidebar | `q` in the sidebar |
 

@@ -13,7 +13,7 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
@@ -23,6 +23,8 @@ usage:
   pier new                  new-session picker (usually via the sidebar's "+")
   pier ensure [-t session]  create the sidebar in a session if missing
   pier toggle [-t session]  toggle the sidebar pane
+  pier done                 kill the current session and jump to the next
+                              one in sidebar order (or just exit if alone)
   pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
                                       stop | permission-request | session-start
@@ -51,6 +53,8 @@ func main() {
 		err = tmux.EnsureSidebar(targetSession(), self())
 	case "toggle":
 		err = tmux.ToggleSidebar(targetSession(), self())
+	case "done":
+		err = doneCmd()
 	case "hook":
 		if len(os.Args) < 3 {
 			usage()
@@ -90,6 +94,30 @@ func self() string {
 		return "pier"
 	}
 	return exe
+}
+
+// doneCmd kills the current session after switching the client to the next
+// session in sidebar order. With no other session it just kills — the client
+// leaves tmux, matching "close the last one".
+func doneCmd() error {
+	cur := tmux.CurrentSession()
+	if cur == "" {
+		return fmt.Errorf("not inside tmux")
+	}
+	panes, err := tmux.ListPanes()
+	if err != nil {
+		return err
+	}
+	// Ordering only — skip branch resolution (one git call per worktree).
+	groups := discover.Group(panes, func(string) string { return "" })
+	next := discover.NextSession(discover.SessionOrder(groups), tmux.AllSessions(), cur)
+	if next != "" {
+		// Don't kill if the switch failed: that would strand the client.
+		if err := tmux.SwitchTo(next); err != nil {
+			return err
+		}
+	}
+	return tmux.KillSession(cur)
 }
 
 // statusLine renders a colored "path ⎇ branch" fragment for tmux status-right.
