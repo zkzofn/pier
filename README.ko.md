@@ -51,7 +51,7 @@ make setup          # 빌드 + ~/.local/bin 설치 + pier setup
 ```
 
 `pier setup`은 `~/.tmux.conf`에 마커 블록을 추가하고 `~/.claude/settings.json`에
-hook 4종을 병합한다 — 기존 설정은 보존되고 `.bak-pier` 백업을 먼저 남긴다.
+hook 5종을 병합한다 — 기존 설정은 보존되고 `.bak-pier` 백업을 먼저 남긴다.
 재실행해도 중복되지 않으며, tmux 서버가 떠 있으면 즉시 리로드까지 한다.
 
 <details>
@@ -87,12 +87,13 @@ bind-key g run-shell "~/.local/bin/pier toggle"
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook user-prompt-submit", "timeout": 5 }] }],
     "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook pre-tool-use", "timeout": 5 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook stop", "timeout": 5 }] }],
-    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook permission-request", "timeout": 5 }] }]
+    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook permission-request", "timeout": 5 }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook session-start", "timeout": 5 }] }]
   }
 }
 ```
 
-hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘만 `·`(미확인)으로 남는다.
+hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘(`·`로 고정)과 프롬프트 라벨만 빠진다.
 
 </details>
 
@@ -125,7 +126,7 @@ hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 
 
 - **진실의 원천은 tmux.** 2초마다 `list-panes -a`를 폴링해 Claude Code pane을 판별한다(프로세스명이 `claude` 또는 버전 문자열 `2.1.206` 형태). 상태 파일은 장식일 뿐이라 hook이 죽어도 목록은 항상 정확하다.
 - **상태는 CC hooks가 기록.** `pier hook <event>`는 CC의 자식 프로세스로 실행되어 `$TMUX_PANE`을 상속받으므로 pane과 정확히 매핑된다. TUI는 fsnotify로 즉시 반영한다.
-- **대화 제목**: hook payload의 session id로 `~/.claude/projects/*/<id>.jsonl`의 `ai-title` 레코드를 읽는다.
+- **항목 라벨 = 현재 프롬프트.** 각 인스턴스 행에는 그 pane에서 마지막으로 제출한 프롬프트가 표시된다(`UserPromptSubmit` hook payload에서 캡처). `/clear`는 새 세션을 시작하므로(`SessionStart` hook) 다음 프롬프트 전까지 라벨이 공백이 된다. 아직 기록된 프롬프트가 없으면(설치 직후, resume) `~/.claude/projects/*/<id>.jsonl`의 `ai-title` 레코드 → tmux 세션명 순으로 폴백한다.
 
 ## 메모리 사용량 (실측)
 

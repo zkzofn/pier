@@ -50,7 +50,7 @@ cd pier
 make setup          # build + install to ~/.local/bin + pier setup
 ```
 
-`pier setup` appends a marked block to `~/.tmux.conf` and merges four hook
+`pier setup` appends a marked block to `~/.tmux.conf` and merges five hook
 entries into `~/.claude/settings.json` — existing settings are preserved and a
 `.bak-pier` backup is written first. Re-running it never duplicates anything.
 If a tmux server is running, the config is reloaded on the spot.
@@ -88,12 +88,13 @@ Add to `hooks` in `~/.claude/settings.json` (replace `<you>` in the paths):
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook user-prompt-submit", "timeout": 5 }] }],
     "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook pre-tool-use", "timeout": 5 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook stop", "timeout": 5 }] }],
-    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook permission-request", "timeout": 5 }] }]
+    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook permission-request", "timeout": 5 }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook session-start", "timeout": 5 }] }]
   }
 }
 ```
 
-Everything except the status icons — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
+Everything except the status icons and prompt labels — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
 
 </details>
 
@@ -126,7 +127,7 @@ tmux delivers keystrokes to the focused pane, so `j`/`k` only work while the sid
 
 - **tmux is the source of truth.** Every 2 seconds the sidebar polls `list-panes -a` and detects Claude Code panes (process name `claude`, or a version string like `2.1.206`). State files are decoration only — even if the hooks die, the list stays correct.
 - **Status is recorded by Claude Code hooks.** `pier hook <event>` runs as a child of Claude Code, so it inherits `$TMUX_PANE` and maps to the exact pane. The TUI picks changes up instantly via fsnotify.
-- **Conversation titles** are read from the `ai-title` record in `~/.claude/projects/*/<session-id>.jsonl`, resolved from the hook payload's session id.
+- **Item labels show the current prompt.** Each instance row shows the prompt you last submitted in that pane (captured from the `UserPromptSubmit` hook payload). `/clear` starts a new session (`SessionStart` hook), which blanks the label until the next prompt. When no prompt has been recorded yet (fresh install, resume), the label falls back to the session's `ai-title` record in `~/.claude/projects/*/<session-id>.jsonl`, then to the tmux session name.
 
 ## Memory usage (measured)
 

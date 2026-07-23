@@ -94,6 +94,9 @@ var hookEvents = []struct {
 	{"PreToolUse", "pre-tool-use", true},
 	{"Stop", "stop", false},
 	{"PermissionRequest", "permission-request", true},
+	// no matcher: fire on every source (startup|resume|clear|compact);
+	// pier itself ignores compact.
+	{"SessionStart", "session-start", false},
 }
 
 // ClaudeHooks merges pier's hook entries into Claude Code's settings.json,
