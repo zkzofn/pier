@@ -59,7 +59,9 @@ func tmuxBlock(self string) string {
 		`set-hook -g client-attached 'run-shell "` + self + ` ensure"'`,
 		`set-hook -g client-session-changed 'run-shell "` + self + ` ensure"'`,
 		`bind-key g run-shell "` + self + ` toggle"`,
-		`bind-key X run-shell "` + self + ` done"`,
+		// overrides tmux's default kill-pane binding — pier's session-level
+		// "finish and move on" is the more frequent action here.
+		`bind-key x run-shell "` + self + ` done"`,
 		markerEnd,
 		"",
 	}, "\n")
