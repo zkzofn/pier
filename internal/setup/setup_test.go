@@ -79,8 +79,8 @@ func TestClaudeHooksFromScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "4 event(s)") {
-		t.Errorf("want 4 events wired, got %q", msg)
+	if !strings.Contains(msg, "5 event(s)") {
+		t.Errorf("want 5 events wired, got %q", msg)
 	}
 	var s map[string]any
 	data, _ := os.ReadFile(path)
@@ -88,7 +88,7 @@ func TestClaudeHooksFromScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooks := s["hooks"].(map[string]any)
-	for _, ev := range []string{"UserPromptSubmit", "PreToolUse", "Stop", "PermissionRequest"} {
+	for _, ev := range []string{"UserPromptSubmit", "PreToolUse", "Stop", "PermissionRequest", "SessionStart"} {
 		raw, _ := json.Marshal(hooks[ev])
 		if !strings.Contains(string(raw), "pier hook") {
 			t.Errorf("event %s not wired: %s", ev, raw)

@@ -264,7 +264,7 @@ func (m *Model) jumpPane(paneID string) {
 	}
 }
 
-// loadTitles resolves Claude session ids seen in states to their ai-titles.
+// loadTitles resolves Claude session ids seen in states to a display title.
 func (m *Model) loadTitles() {
 	for _, st := range m.states {
 		if st.SessionID == "" || st.CWD == "" {
@@ -273,7 +273,7 @@ func (m *Model) loadTitles() {
 		if _, ok := m.titles[st.SessionID]; ok {
 			continue
 		}
-		if t := aiTitle(st.CWD, st.SessionID); t != "" {
+		if t := sessionTitle(st.CWD, st.SessionID); t != "" {
 			m.titles[st.SessionID] = t
 		}
 	}
@@ -316,11 +316,26 @@ func (m Model) openPicker() tea.Cmd {
 	}
 }
 
+// itemLabel names an instance row: the prompt currently being worked on,
+// falling back to a transcript-derived title — the ai-title, or the first
+// user message, which for a subagent is the task it was assigned. A known
+// session with neither is a fresh or /clear-ed conversation — deliberately
+// blank. Only panes without any recorded Claude state fall back to the tmux
+// session name.
 func (m Model) itemLabel(p tmux.Pane, dup bool) string {
 	if st, ok := m.states[p.ID]; ok && st.SessionID != "" {
+		// re-clean stored labels: state written by older binaries may hold
+		// raw wrapper tags.
+		if l := state.Label(st.LastPrompt); l != "" {
+			return l
+		}
+		if st.Fresh {
+			return "" // startup//clear: deliberately blank, no fallbacks
+		}
 		if t := m.titles[st.SessionID]; t != "" {
 			return t
 		}
+		return ""
 	}
 	label := p.Session
 	if dup {
@@ -419,8 +434,10 @@ func projectSlug(cwd string) string {
 	}, cwd)
 }
 
-// aiTitle reads the ai-title record from a Claude Code session transcript.
-func aiTitle(cwd, sessionID string) string {
+// sessionTitle derives a display title from a Claude Code session transcript:
+// the ai-title record when present, else the first real user message (which
+// for subagent/teammate sessions is the task they were assigned).
+func sessionTitle(cwd, sessionID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -434,21 +451,63 @@ func aiTitle(cwd, sessionID string) string {
 		}
 		path = matches[0]
 	}
+	return titleFromTranscript(path)
+}
+
+func titleFromTranscript(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
 	defer f.Close()
+	firstPrompt := ""
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for i := 0; i < 20 && sc.Scan(); i++ {
+	for i := 0; i < 40 && sc.Scan(); i++ {
 		var rec struct {
-			Type    string `json:"type"`
-			AITitle string `json:"aiTitle"`
+			Type        string `json:"type"`
+			AITitle     string `json:"aiTitle"`
+			IsMeta      bool   `json:"isMeta"`
+			IsSidechain bool   `json:"isSidechain"`
+			Message     struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
 		}
-		if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Type == "ai-title" && rec.AITitle != "" {
-			return rec.AITitle
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec.Type == "ai-title" && rec.AITitle != "" {
+			return rec.AITitle // preferred: Claude's own summary
+		}
+		if firstPrompt != "" || rec.Type != "user" || rec.IsMeta || rec.IsSidechain || rec.Message.Role != "user" {
+			continue
+		}
+		firstPrompt = state.Label(userText(rec.Message.Content))
+	}
+	return firstPrompt
+}
+
+// userText extracts the text of a user record's content, which is either a
+// plain string or a block array mixing text with tool results.
+func userText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, bl := range blocks {
+		if bl.Type == "text" {
+			b.WriteString(bl.Text)
+			b.WriteString("\n")
 		}
 	}
-	return ""
+	return b.String()
 }

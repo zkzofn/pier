@@ -13,7 +13,7 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.4.1"
+const version = "0.5.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
@@ -25,7 +25,7 @@ usage:
   pier toggle [-t session]  toggle the sidebar pane
   pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
-                                      stop | permission-request
+                                      stop | permission-request | session-start
   pier status <path>        print "path ⎇ branch" for tmux status-right
   pier version              print version
 `
