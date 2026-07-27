@@ -24,7 +24,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 - **Jump**: click an item to focus it — even across tmux sessions
 - **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
 - **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
-- **New session**: click `+ new session` (or press `n`) — pick a directory in a centered popup and a Claude Code session starts there, named after the directory
+- **New session**: click `+ new session` (or press `n`) — pick a directory in a centered popup and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a plain shell session — for when you want a terminal without splitting a pane or opening a new window
 
 ## Requirements
 
@@ -107,7 +107,7 @@ Everything except the status icons and prompt labels — sidebar, jump, status b
 | To do this | Do this |
 |---|---|
 | Jump to another session | **Click** the item in the sidebar |
-| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
+| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `^S` to create with a plain shell instead of Claude Code (shell sessions aren't listed in the sidebar), `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
 | Finish the current session | `prefix + x` (or `pier done`) — kills the session and jumps to the next one in sidebar order; with no other session it just exits. No confirmation — the kill is immediate. Overrides tmux's default kill-pane binding |
