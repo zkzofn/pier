@@ -293,7 +293,7 @@ func (m *Model) buildRows() {
 	}
 	if len(m.items) == 0 {
 		m.rows = append(m.rows,
-			row{kind: rowInfo, text: " no claude sessions", item: -1},
+			row{kind: rowInfo, text: " no sessions", item: -1},
 			row{kind: rowBlank, item: -1})
 	}
 	m.rows = append(m.rows, row{kind: rowNew, item: -1})
@@ -320,10 +320,10 @@ func (m Model) openPicker() tea.Cmd {
 // falling back to a transcript-derived title — the ai-title, or the first
 // user message, which for a subagent is the task it was assigned. A known
 // session with neither is a fresh or /clear-ed conversation — deliberately
-// blank. Only panes without any recorded Claude state fall back to the tmux
-// session name.
+// blank. Shell instances and panes without any recorded Claude state fall
+// back to the tmux session name.
 func (m Model) itemLabel(p tmux.Pane, dup bool) string {
-	if st, ok := m.states[p.ID]; ok && st.SessionID != "" {
+	if st, ok := m.states[p.ID]; ok && st.SessionID != "" && discover.IsClaudeCommand(p.Command) {
 		// re-clean stored labels: state written by older binaries may hold
 		// raw wrapper tags.
 		if l := state.Label(st.LastPrompt); l != "" {
@@ -361,7 +361,7 @@ func (m Model) View() string {
 	}
 
 	// rows[0] is the reserved header line
-	writeLine(styleHeader.Render(" Pier — CC sessions"))
+	writeLine(styleHeader.Render(" Pier — sessions"))
 
 	rows := m.rows
 	if len(rows) > 0 {
@@ -386,9 +386,13 @@ func (m Model) View() string {
 				}
 			}
 			st := m.states[r.pane.ID].State
-			icon, ok := icons[st]
-			if !ok {
-				icon = "·"
+			icon := "·"
+			if !discover.IsClaudeCommand(r.pane.Command) {
+				// plain shell session: CC states don't apply (any recorded
+				// state is stale from an earlier claude run in this pane)
+				st, icon = "", "$"
+			} else if ic, ok := icons[st]; ok {
+				icon = ic
 			}
 			iconR := styleDim.Render(icon)
 			if s, ok := iconStyles[st]; ok {

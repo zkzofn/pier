@@ -7,24 +7,24 @@ See every running Claude Code session at a glance — which worktree and branch 
 
 ```
 ┌──────────────────────┬─────────────────────────────────────┐
-│ Pier — CC sessions   │                                     │
+│ Pier — sessions      │                                     │
 │                      │                                     │
 │ suite2 ⎇ feat/nmt    │                                     │
 │  ● Refactor payments │        Claude Code (main pane)      │
 │ suite3 ⎇ dev         │                                     │
 │  ○ suite3            │                                     │
 │ terminal ⎇ -         │                                     │
-│  ● Build tmux dash ◀ │                                     │
+│  $ terminal        ◀ │                                     │
 └──────────────────────┴─────────────────────────────────────┘
  [session]                      [~/dev/suite2 ⎇ feat/nmt 13:53]
 ```
 
-- **Sidebar**: every running Claude Code instance across all tmux sessions, grouped by worktree (path + branch). Items show the conversation's AI-generated title, falling back to the tmux session name
-- **Status icons**: `●` working / `○` waiting for your input / `!` waiting for permission approval / `·` unknown
+- **Sidebar**: every running Claude Code instance across all tmux sessions, grouped by worktree (path + branch). Items show the conversation's AI-generated title, falling back to the tmux session name. Sessions with no Claude Code pane at all are listed too, marked `$` — plain shells stay visible and jumpable
+- **Status icons**: `●` working / `○` waiting for your input / `!` waiting for permission approval / `·` unknown / `$` plain shell session
 - **Jump**: click an item to focus it — even across tmux sessions
 - **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
 - **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
-- **New session**: click `+ new session` (or press `n`) — pick a directory in a centered popup and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a plain shell session — for when you want a terminal without splitting a pane or opening a new window
+- **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — pick a directory in a centered popup and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a plain shell session — for when you want a terminal without splitting a pane or opening a new window
 
 ## Requirements
 
@@ -78,6 +78,9 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 # prefix + x : kill the current session, jump to the next one (sidebar order)
 # (overrides the default kill-pane binding; close panes with exit/Ctrl-D)
 bind-key x run-shell "~/.local/bin/pier done"
+
+# prefix + N : open the new-session picker
+bind-key N display-popup -E -w 46 -h 18 -T " New session " "~/.local/bin/pier new"
 ```
 
 Apply with `tmux source-file ~/.tmux.conf`.
@@ -107,7 +110,7 @@ Everything except the status icons and prompt labels — sidebar, jump, status b
 | To do this | Do this |
 |---|---|
 | Jump to another session | **Click** the item in the sidebar |
-| Create a new session | Click `+ new session` (or `n` with the sidebar focused). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `^S` to create with a plain shell instead of Claude Code (shell sessions aren't listed in the sidebar), `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
+| Create a new session | Click `+ new session` (`n` with the sidebar focused, or `prefix+N` from anywhere). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `^S` to create with a plain shell instead of Claude Code, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
 | Finish the current session | `prefix + x` (or `pier done`) — kills the session and jumps to the next one in sidebar order; with no other session it just exits. No confirmation — the kill is immediate. Overrides tmux's default kill-pane binding |

@@ -62,21 +62,40 @@ func tmuxBlock(self string) string {
 		// overrides tmux's default kill-pane binding — pier's session-level
 		// "finish and move on" is the more frequent action here.
 		`bind-key x run-shell "` + self + ` done"`,
+		// bound directly (not via run-shell) so the popup lands on the
+		// client that pressed the key. Keep the geometry and title in sync
+		// with tmux.OpenNewPopup.
+		`bind-key N display-popup -E -w 46 -h 18 -T " New session " "` + self + ` new"`,
 		markerEnd,
 		"",
 	}, "\n")
 }
 
-// TmuxConf appends the pier block to the tmux config unless it already
-// references pier. The file is created when missing.
+// TmuxConf writes the pier block into the tmux config: appended when absent,
+// rewritten in place when the marker block exists but is outdated (so
+// upgrades pick up new bindings). A pier reference outside our markers means
+// a manual setup — left untouched. The file is created when missing.
 func TmuxConf(path, self string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return "", err
 	}
 	content := string(data)
-	if strings.Contains(content, markerBegin) || strings.Contains(content, "pier ensure") {
-		return "tmux.conf: already configured — skipped", nil
+	if i := strings.Index(content, markerBegin); i >= 0 {
+		if j := strings.Index(content, markerEnd); j > i {
+			block := strings.TrimSuffix(tmuxBlock(self), "\n")
+			if content[i:j+len(markerEnd)] == block {
+				return "tmux.conf: already up to date — skipped", nil
+			}
+			content = content[:i] + block + content[j+len(markerEnd):]
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				return "", err
+			}
+			return "tmux.conf: pier block updated", nil
+		}
+	}
+	if strings.Contains(content, "pier ensure") {
+		return "tmux.conf: already configured (unmanaged) — skipped", nil
 	}
 	if content != "" {
 		content = strings.TrimRight(content, "\n") + "\n\n"
