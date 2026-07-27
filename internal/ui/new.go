@@ -1,5 +1,6 @@
 // The new-session picker: runs inside a tmux popup (`pier new`).
 // Pick a directory → the session name follows it; Tab edits the name.
+// Enter starts Claude Code there, ctrl+s a plain shell.
 package ui
 
 import (
@@ -25,6 +26,12 @@ var (
 )
 
 const listTop = 2 // line 0: filter, line 1: blank, then the list
+
+// what the new session's main pane runs
+const (
+	cmdClaude = "claude"
+	cmdShell  = "" // empty: tmux's default shell
+)
 
 type pickerModel struct {
 	home     string
@@ -125,7 +132,7 @@ func (m *pickerModel) clampScroll() {
 	}
 }
 
-func (m pickerModel) confirm(i int) (tea.Model, tea.Cmd) {
+func (m pickerModel) confirm(i int, command string) (tea.Model, tea.Cmd) {
 	cand := m.itemAt(i)
 	if cand == nil {
 		return m, nil
@@ -146,7 +153,7 @@ func (m pickerModel) confirm(i int) (tea.Model, tea.Cmd) {
 			return mm, nil
 		}
 	}
-	if err := tmux.NewSessionAndSwitch(name, cand.Path); err != nil {
+	if err := tmux.NewSessionAndSwitch(name, cand.Path, command); err != nil {
 		mm := m
 		mm.errMsg = err.Error()
 		return mm, nil
@@ -182,7 +189,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i := msg.Y - listTop + m.scroll
 			if m.itemAt(i) != nil {
 				m.cursor = i
-				return m.confirm(i)
+				return m.confirm(i, cmdClaude)
 			}
 		}
 		return m, nil
@@ -191,7 +198,9 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editing {
 			switch msg.String() {
 			case "enter":
-				return m.confirm(m.cursor)
+				return m.confirm(m.cursor, cmdClaude)
+			case "ctrl+s":
+				return m.confirm(m.cursor, cmdShell)
 			case "esc":
 				m.editing = false
 				m.name = ""
@@ -211,7 +220,9 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "ctrl+c":
 			return m, tea.Quit
 		case "enter":
-			return m.confirm(m.cursor)
+			return m.confirm(m.cursor, cmdClaude)
+		case "ctrl+s":
+			return m.confirm(m.cursor, cmdShell)
 		case "tab":
 			if cand := m.itemAt(m.cursor); cand != nil && cand.Open == "" {
 				m.editing = true
@@ -264,7 +275,7 @@ func (m pickerModel) View() string {
 		if m.errMsg != "" {
 			line(" " + styleNewErr.Render(m.errMsg))
 		}
-		line(" " + styleHint.Render("Enter: create · Esc: back"))
+		line(" " + styleHint.Render("Enter: create · ^S: shell · Esc: back"))
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
@@ -298,7 +309,7 @@ func (m pickerModel) View() string {
 	if m.errMsg != "" {
 		line(" " + styleNewErr.Render(m.errMsg))
 	} else {
-		line(" " + styleHint.Render("Enter: create · Tab: name · Esc"))
+		line(" " + styleHint.Render("Enter: create · ^S: shell · Tab: name · Esc"))
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
