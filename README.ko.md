@@ -7,24 +7,24 @@
 
 ```
 ┌──────────────────────┬─────────────────────────────────────┐
-│ Pier — CC sessions   │                                     │
+│ Pier — sessions      │                                     │
 │                      │                                     │
 │ suite2 ⎇ feat/nmt    │                                     │
 │  ● 결제 모듈 리팩토링  │        Claude Code (main pane)      │
 │ suite3 ⎇ dev         │                                     │
 │  ○ suite3            │                                     │
 │ terminal ⎇ -         │                                     │
-│  ● Tmux 대시보드 개발 ◀│                                     │
+│  $ terminal        ◀ │                                     │
 └──────────────────────┴─────────────────────────────────────┘
  [session]                      [~/dev/suite2 ⎇ feat/nmt 13:53]
 ```
 
-- **사이드바**: 실행 중인 모든 Claude Code 인스턴스를 워크트리(경로+브랜치)별로 그룹핑. 항목 이름은 대화의 AI 생성 제목(없으면 tmux 세션명)
-- **상태 아이콘**: `●` 작업중 / `○` 입력 대기 / `!` 권한 승인 대기 / `·` 미확인
+- **사이드바**: 실행 중인 모든 Claude Code 인스턴스를 워크트리(경로+브랜치)별로 그룹핑. 항목 이름은 대화의 AI 생성 제목(없으면 tmux 세션명). CC pane이 하나도 없는 세션도 `$`로 함께 표시 — 일반 셸 세션도 목록에서 보이고 점프된다
+- **상태 아이콘**: `●` 작업중 / `○` 입력 대기 / `!` 권한 승인 대기 / `·` 미확인 / `$` 일반 셸 세션
 - **점프**: 항목을 마우스로 클릭 → 다른 tmux 세션이어도 바로 전환
 - **status bar**: 우측에 현재 pane의 경로 + git 브랜치 상시 표시 (detached HEAD는 `detached@sha`)
 - **자동 부착**: 세션에 attach하거나 전환하면 사이드바가 알아서 생긴다
-- **새 세션 생성**: `+ new session` 클릭(또는 `n`) — 중앙 popup에서 디렉토리를 고르면 그 이름의 Claude Code 세션이 그 경로에서 시작된다. `Enter` 대신 `^S`를 누르면 일반 셸 세션 — pane 분할이나 새 윈도우 없이 터미널이 필요할 때
+- **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — 중앙 popup에서 디렉토리를 고르면 그 이름의 Claude Code 세션이 그 경로에서 시작된다. `Enter` 대신 `^S`를 누르면 일반 셸 세션 — pane 분할이나 새 윈도우 없이 터미널이 필요할 때
 
 ## 요구사항
 
@@ -77,6 +77,9 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 # prefix + x : 현재 세션 종료 후 다음 세션으로 (사이드바 순서)
 # (기본 kill-pane 바인딩을 덮어씀 — pane 닫기는 exit/Ctrl-D로)
 bind-key x run-shell "~/.local/bin/pier done"
+
+# prefix + N : 새 세션 picker 열기
+bind-key N display-popup -E -w 46 -h 18 -T " New session " "~/.local/bin/pier new"
 ```
 
 적용: `tmux source-file ~/.tmux.conf`
@@ -106,7 +109,7 @@ hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 
 | 하고 싶은 것 | 방법 |
 |---|---|
 | 다른 세션으로 점프 | 사이드바 항목 **클릭** |
-| 새 세션 생성 | `+ new session` 클릭(또는 사이드바 포커스에서 `n`). 타이핑으로 디렉토리 필터(`~/dev/*` + 과거 CC 사용 경로), `Enter` 생성, `^S`는 Claude Code 대신 일반 셸로 생성(셸 세션은 사이드바 목록에는 안 뜬다), `Tab`으로 제안된 이름 수정. 없는 경로를 입력하면 `mkdir & create`로 디렉토리까지 만들어 진행, 이미 열린 경로를 고르면 생성 대신 점프 |
+| 새 세션 생성 | `+ new session` 클릭(사이드바 포커스에서 `n`, 아무 데서나 `prefix+N`). 타이핑으로 디렉토리 필터(`~/dev/*` + 과거 CC 사용 경로), `Enter` 생성, `^S`는 Claude Code 대신 일반 셸로 생성, `Tab`으로 제안된 이름 수정. 없는 경로를 입력하면 `mkdir & create`로 디렉토리까지 만들어 진행, 이미 열린 경로를 고르면 생성 대신 점프 |
 | 키보드로 점프 | 사이드바 pane으로 포커스 이동(`prefix+←`) 후 `j`/`k` + `Enter` |
 | 사이드바 열기/닫기 | `prefix + g`, 또는 `pier toggle` |
 | 현재 세션 끝내기 | `prefix + x` (또는 `pier done`) — 세션을 종료하고 사이드바 순서상 다음 세션으로 점프. 다른 세션이 없으면 그냥 종료. 확인 절차 없이 즉시 kill. tmux 기본 kill-pane 바인딩을 덮어씀 |

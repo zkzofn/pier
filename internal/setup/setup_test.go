@@ -21,7 +21,7 @@ func TestTmuxConfCreatesAndSkips(t *testing.T) {
 		t.Errorf("want added, got %q", msg)
 	}
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}"`} {
+	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}"`, "bind-key N display-popup"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config missing %q", want)
 		}
@@ -55,6 +55,46 @@ func TestTmuxConfPreservesExisting(t *testing.T) {
 	}
 	if !strings.Contains(string(data), markerBegin) {
 		t.Error("pier block not appended")
+	}
+}
+
+func TestTmuxConfUpgradesManagedBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".tmux.conf")
+	old := "set -g prefix C-a\n\n" +
+		markerBegin + "\n" +
+		`set-hook -g client-attached 'run-shell "` + self + ` ensure"'` + "\n" +
+		markerEnd + "\n\n" +
+		"set -g history-limit 9000\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, err := TmuxConf(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "updated") {
+		t.Errorf("outdated block should be rewritten, got %q", msg)
+	}
+	data, _ := os.ReadFile(path)
+	conf := string(data)
+	if !strings.HasPrefix(conf, "set -g prefix C-a\n") || !strings.Contains(conf, "set -g history-limit 9000\n") {
+		t.Error("config around the pier block not preserved")
+	}
+	if !strings.Contains(conf, "bind-key N display-popup") {
+		t.Error("upgraded block missing the new binding")
+	}
+	if strings.Count(conf, markerBegin) != 1 || strings.Count(conf, markerEnd) != 1 {
+		t.Error("markers duplicated on upgrade")
+	}
+
+	// Now current: a further run must not rewrite.
+	msg, err = TmuxConf(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "skipped") {
+		t.Errorf("up-to-date block should be skipped, got %q", msg)
 	}
 }
 

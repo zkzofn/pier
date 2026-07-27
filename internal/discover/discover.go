@@ -1,4 +1,5 @@
-// Package discover finds running Claude Code panes and groups them by worktree.
+// Package discover finds running Claude Code panes (plus plain-shell
+// sessions) and groups them by worktree.
 package discover
 
 import (
@@ -30,13 +31,47 @@ type Worktree struct {
 // BranchFunc resolves a directory to a branch label. Injectable for tests.
 type BranchFunc func(path string) string
 
+// paneRank orders a session's panes by how well they represent it: the
+// focused pane first, then any pane in the session's current window. The
+// sidebar can hold focus itself, so "current window" matters as a fallback.
+func paneRank(p tmux.Pane) int {
+	switch {
+	case p.WindowActive && p.PaneActive:
+		return 2
+	case p.WindowActive:
+		return 1
+	}
+	return 0
+}
+
 // Group filters Claude Code panes and groups them by pane_current_path.
+// A session with no Claude Code pane at all still gets one entry — its most
+// prominent regular pane (focused > current window > first) represents it as
+// a shell instance, so plain-shell sessions stay visible and jumpable.
 func Group(panes []tmux.Pane, branch BranchFunc) []Worktree {
+	hasCC := map[string]bool{}
+	for _, p := range panes {
+		if !p.Sidebar && IsClaudeCommand(p.Command) {
+			hasCC[p.Session] = true
+		}
+	}
+	shellRep := map[string]tmux.Pane{}
+	for _, p := range panes {
+		if p.Sidebar || hasCC[p.Session] {
+			continue
+		}
+		if cur, ok := shellRep[p.Session]; !ok || paneRank(p) > paneRank(cur) {
+			shellRep[p.Session] = p
+		}
+	}
 	byPath := map[string][]tmux.Pane{}
 	for _, p := range panes {
 		if p.Sidebar || !IsClaudeCommand(p.Command) {
 			continue
 		}
+		byPath[p.Path] = append(byPath[p.Path], p)
+	}
+	for _, p := range shellRep {
 		byPath[p.Path] = append(byPath[p.Path], p)
 	}
 	wts := make([]Worktree, 0, len(byPath))

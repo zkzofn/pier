@@ -11,19 +11,21 @@ import (
 
 // Pane is one tmux pane as reported by list-panes.
 type Pane struct {
-	Session   string
-	WindowIdx string
-	PaneIdx   string
-	ID        string // e.g. "%23"
-	Command   string // pane_current_command
-	Path      string // pane_current_path
-	Sidebar   bool   // @pier user option set
+	Session      string
+	WindowIdx    string
+	PaneIdx      string
+	ID           string // e.g. "%23"
+	Command      string // pane_current_command
+	Path         string // pane_current_path
+	WindowActive bool   // its window is the session's current window
+	PaneActive   bool   // it is its window's active pane
+	Sidebar      bool   // @pier user option set
 }
 
 // SidebarWidth is the fixed sidebar pane width in columns.
 const SidebarWidth = 30
 
-const paneFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{@pier}"
+const paneFormat = "#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{window_active}\t#{pane_active}\t#{@pier}"
 
 func run(args ...string) (string, error) {
 	out, err := exec.Command("tmux", args...).Output()
@@ -47,18 +49,20 @@ func ParsePanes(out string) []Pane {
 		}
 		f := strings.Split(line, "\t")
 		// The trailing @pier field is empty for normal panes and may get
-		// stripped along the way; require only the 6 guaranteed fields.
-		if len(f) < 6 {
+		// stripped along the way; require only the 8 guaranteed fields.
+		if len(f) < 8 {
 			continue
 		}
 		panes = append(panes, Pane{
-			Session:   f[0],
-			WindowIdx: f[1],
-			PaneIdx:   f[2],
-			ID:        f[3],
-			Command:   f[4],
-			Path:      f[5],
-			Sidebar:   len(f) >= 7 && f[6] == "1",
+			Session:      f[0],
+			WindowIdx:    f[1],
+			PaneIdx:      f[2],
+			ID:           f[3],
+			Command:      f[4],
+			Path:         f[5],
+			WindowActive: f[6] == "1",
+			PaneActive:   f[7] == "1",
+			Sidebar:      len(f) >= 9 && f[8] == "1",
 		})
 	}
 	return panes
@@ -191,7 +195,8 @@ func AllSessions() []string {
 }
 
 // OpenNewPopup opens the new-session picker as a centered popup on the
-// client that just interacted with our session.
+// client that just interacted with our session. Keep the geometry and title
+// in sync with the prefix+N binding in setup.tmuxBlock.
 func OpenNewPopup(self, session string) error {
 	args := []string{"display-popup", "-E", "-w", "46", "-h", "18", "-T", " New session "}
 	out, _ := run("list-clients", "-F", "#{client_name}\t#{client_session}\t#{client_activity}")
