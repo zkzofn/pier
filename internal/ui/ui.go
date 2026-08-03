@@ -53,6 +53,7 @@ const (
 	rowHeader
 	rowItem
 	rowNew  // the "+ new session" action line
+	rowHelp // the "? help" action line
 	rowInfo // plain informational text
 )
 
@@ -220,7 +221,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.jump(m.cursor)
 		case "n":
-			return m, m.openPicker()
+			return m, m.openPopup(tmux.OpenNewPopup)
+		case "?":
+			return m, m.openPopup(tmux.OpenKeysPopup)
 		case "r":
 			return m, refresh
 		}
@@ -244,7 +247,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.jumpPane(r.wt.Instances[0].ID)
 			}
 		case rowNew:
-			return m, m.openPicker()
+			return m, m.openPopup(tmux.OpenNewPopup)
+		case rowHelp:
+			return m, m.openPopup(tmux.OpenKeysPopup)
 		}
 		return m, nil
 	}
@@ -297,21 +302,22 @@ func (m *Model) buildRows() {
 			row{kind: rowBlank, item: -1})
 	}
 	m.rows = append(m.rows, row{kind: rowNew, item: -1})
+	m.rows = append(m.rows, row{kind: rowHelp, item: -1})
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1 // may become -1 (hidden) when empty
 	}
 }
 
-// openPicker launches the new-session popup on the interacting client and
-// refreshes when it closes.
-func (m Model) openPicker() tea.Cmd {
+// openPopup launches a pier popup (picker, keys) on the interacting client
+// and refreshes when it closes.
+func (m Model) openPopup(open func(self, session string) error) tea.Cmd {
 	self, err := os.Executable()
 	if err != nil {
 		self = "pier"
 	}
 	session := m.session
 	return func() tea.Msg {
-		_ = tmux.OpenNewPopup(self, session)
+		_ = open(self, session)
 		return refresh()
 	}
 }
@@ -373,6 +379,8 @@ func (m Model) View() string {
 			writeLine("")
 		case rowNew:
 			writeLine("  " + styleBranch.Render("+") + styleDim.Render(" new session"))
+		case rowHelp:
+			writeLine("  " + styleBranch.Render("?") + styleDim.Render(" help"))
 		case rowInfo:
 			writeLine(styleDim.Render(r.text))
 		case rowHeader:

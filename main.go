@@ -13,7 +13,7 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.8.0"
+const version = "0.9.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
@@ -21,6 +21,7 @@ usage:
   pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
   pier run                  run the sidebar TUI (inside a tmux pane)
   pier new                  new-session picker (sidebar "+" / prefix+N)
+  pier keys                 keybinding cheatsheet (sidebar "?")
   pier ensure [-t session]  create the sidebar in a session if missing
   pier toggle [-t session]  toggle the sidebar pane
   pier done                 kill the current session and jump to the next
@@ -49,6 +50,8 @@ func main() {
 		err = ui.Run()
 	case "new":
 		err = ui.RunNew()
+	case "keys":
+		err = ui.RunKeys()
 	case "ensure":
 		err = tmux.EnsureSidebar(targetSession(), self())
 	case "toggle":
