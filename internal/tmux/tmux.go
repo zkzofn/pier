@@ -194,18 +194,29 @@ func AllSessions() []string {
 	return names
 }
 
-// OpenNewPopup opens the new-session picker as a centered popup on the
-// client that just interacted with our session. Keep the geometry and title
-// in sync with the prefix+N binding in setup.tmuxBlock.
-func OpenNewPopup(self, session string) error {
-	args := []string{"display-popup", "-E", "-w", "46", "-h", "18", "-T", " New session "}
+// openPopup opens a centered popup running cmd on the client that just
+// interacted with our session.
+func openPopup(session string, w, h int, title, cmd string) error {
+	args := []string{"display-popup", "-E", "-w", strconv.Itoa(w), "-h", strconv.Itoa(h), "-T", title}
 	out, _ := run("list-clients", "-F", "#{client_name}\t#{client_session}\t#{client_activity}")
 	if client := PickMostRecentClient(out, session); client != "" {
 		args = append(args, "-c", client)
 	}
-	args = append(args, self+" new")
+	args = append(args, cmd)
 	_, err := run(args...)
 	return err
+}
+
+// OpenNewPopup opens the new-session picker popup. Keep the geometry and
+// title in sync with the prefix+N binding in setup.tmuxBlock.
+func OpenNewPopup(self, session string) error {
+	return openPopup(session, 46, 18, " New session ", self+" new")
+}
+
+// OpenKeysPopup opens the keybinding cheatsheet popup. Keep the geometry in
+// sync with ui.keysContent.
+func OpenKeysPopup(self, session string) error {
+	return openPopup(session, 46, 28, " Pier keys ", self+" keys")
 }
 
 // sidebarPaneIn returns the pane id of an existing sidebar in the session.

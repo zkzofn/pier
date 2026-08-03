@@ -3,7 +3,10 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func writeTranscript(t *testing.T, lines string) string {
@@ -13,6 +16,20 @@ func writeTranscript(t *testing.T, lines string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// The keys popup is 46 wide with no truncation — every rendered line must
+// fit (45 usable, matching the ambiguous-width guard used elsewhere).
+func TestKeysContentFitsPopup(t *testing.T) {
+	for _, line := range strings.Split(keysContent(), "\n") {
+		if w := lipgloss.Width(line); w > 45 {
+			t.Errorf("line %d cols wide, over 45: %q", w, line)
+		}
+	}
+	// The popup is 28 tall (2 for the border): the content must fit too.
+	if n := strings.Count(keysContent(), "\n") + 1; n > 26 {
+		t.Errorf("keys content is %d lines, over 26", n)
+	}
 }
 
 func TestTitleFromTranscriptPrefersAITitle(t *testing.T) {
