@@ -25,6 +25,7 @@
 - **status bar**: 우측에 현재 pane의 경로 + git 브랜치 상시 표시 (detached HEAD는 `detached@sha`)
 - **자동 부착**: 세션에 attach하거나 전환하면 사이드바가 알아서 생긴다
 - **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — 중앙 popup에서 디렉토리를 고르면 그 이름의 Claude Code 세션이 그 경로에서 시작된다. `Enter` 대신 `^S`를 누르면 일반 셸 세션 — pane 분할이나 새 윈도우 없이 터미널이 필요할 때
+- **자동 복구(auto-resume)**: 크래시·전원 차단·OS 재부팅으로 날아간 Claude Code 세션은 사라지지 않는다 — 같은 디렉토리에서 다음 세션을 만들면 빈 세션 대신 `claude --resume <그 대화>`로 시작된다
 - **도움말**: 사이드바 하단 `? help` 클릭(또는 `?`) — 위의 모든 키를 popup으로 보여주니 외울 필요 없다
 
 ## 요구사항
@@ -52,7 +53,7 @@ make setup          # 빌드 + ~/.local/bin 설치 + pier setup
 ```
 
 `pier setup`은 `~/.tmux.conf`에 마커 블록을 추가하고 `~/.claude/settings.json`에
-hook 5종을 병합한다 — 기존 설정은 보존되고 `.bak-pier` 백업을 먼저 남긴다.
+hook 6종을 병합한다 — 기존 설정은 보존되고 `.bak-pier` 백업을 먼저 남긴다.
 재실행해도 중복되지 않으며, tmux 서버가 떠 있으면 즉시 리로드까지 한다.
 
 <details>
@@ -96,12 +97,13 @@ bind-key N display-popup -E -w 46 -h 18 -T " New session " "~/.local/bin/pier ne
     "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook pre-tool-use", "timeout": 5 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook stop", "timeout": 5 }] }],
     "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook permission-request", "timeout": 5 }] }],
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook session-start", "timeout": 5 }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook session-start", "timeout": 5 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/Users/<you>/.local/bin/pier hook session-end", "timeout": 5 }] }]
   }
 }
 ```
 
-hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘(`·`로 고정)과 프롬프트 라벨만 빠진다.
+hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 아이콘(`·`로 고정)과 프롬프트 라벨, 자동 복구만 빠진다.
 
 </details>
 
@@ -137,6 +139,11 @@ hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 
 - **진실의 원천은 tmux.** 2초마다 `list-panes -a`를 폴링해 Claude Code pane을 판별한다(프로세스명이 `claude` 또는 버전 문자열 `2.1.206` 형태). 상태 파일은 장식일 뿐이라 hook이 죽어도 목록은 항상 정확하다.
 - **상태는 CC hooks가 기록.** `pier hook <event>`는 CC의 자식 프로세스로 실행되어 `$TMUX_PANE`을 상속받으므로 pane과 정확히 매핑된다. TUI는 fsnotify로 즉시 반영한다.
 - **항목 라벨 = 현재 프롬프트.** 각 인스턴스 행에는 그 pane에서 마지막으로 제출한 프롬프트가 표시된다(`UserPromptSubmit` hook payload에서 캡처). `/clear`는 새 세션을 시작하므로(`SessionStart` hook) 다음 프롬프트 전까지 라벨이 공백이 된다. 아직 기록된 프롬프트가 없으면(설치 직후, resume) `~/.claude/projects/*/<id>.jsonl`의 `ai-title` 레코드 → tmux 세션명 순으로 폴백한다.
+- **자동 복구.** `UserPromptSubmit`마다 생존 마커(`~/.claude/live-sessions/<session-id>.json`, 세션의 cwd·pid 포함)를 남기고, `SessionEnd`가 이를 종료 로그로 회수한다. picker가 Claude Code 세션을 시작할 때 pier가 그 디렉토리의 사상자를 찾아 `--resume <id>`를 붙인다:
+  - *크래시* (SIGKILL, 커널 패닉, 전원 차단): hook이 돌지 못했으므로 마커가 죽은 pid를 담은 채 남아 있다.
+  - *정상 OS 셧다운*: hook이 돌아 마커는 사라진다 — 대신 사이드바가 1분마다 touch하는 하트비트 파일이 이전 부팅에서 동결된 시각 ±90초 안에 끝난 세션을 셧다운 사상자로 판정한다. 사용자가 의도한 종료(`/clear`, logout, 프롬프트에서 exit)는 제외된다.
+
+  같은 판정을 셸 스크립트·래퍼에서 쓸 수 있게 `pier resume-pick <dir>`로 노출한다: 복구할 세션 id를 출력하고 기록을 소비한다(없으면 아무것도 출력하지 않음). 한계: 셧다운 감지는 셧다운 당시 사이드바가 떠 있었어야 하고(하트비트의 주인), 셧다운 직전 ~90초 안에 직접 닫은 세션은 오탐으로 복구될 수 있다 — 이어서 시작될 뿐이라 해는 없지만 요청한 적 없는 복구다.
 
 ## 메모리 사용량 (실측)
 

@@ -7,13 +7,14 @@ import (
 	"os"
 
 	"pier/internal/discover"
+	"pier/internal/resume"
 	"pier/internal/setup"
 	"pier/internal/state"
 	"pier/internal/tmux"
 	"pier/internal/ui"
 )
 
-const version = "0.9.0"
+const version = "0.10.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
@@ -28,7 +29,11 @@ usage:
                               one in sidebar order (or just exit if alone)
   pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
-                                      stop | permission-request | session-start
+                                      stop | permission-request |
+                                      session-start | session-end
+  pier resume-pick <dir>    print (and consume) the session id of a Claude
+                              session lost in <dir> to a crash or an OS
+                              shutdown — empty when there is none
   pier status <path>        print "path ⎇ branch" for tmux status-right
   pier version              print version
 `
@@ -65,7 +70,21 @@ func main() {
 		}
 		var payload []byte
 		payload, _ = io.ReadAll(os.Stdin)
+		// Liveness bookkeeping is best-effort: a failed write must never
+		// surface as a hook error inside Claude Code.
+		switch os.Args[2] {
+		case "user-prompt-submit":
+			_ = resume.RecordPrompt(resume.Dir(), payload)
+		case "session-end":
+			_ = resume.RecordEnd(resume.Dir(), payload)
+		}
 		err = state.Record(state.Dir(), os.Args[2], payload)
+	case "resume-pick":
+		if len(os.Args) < 3 {
+			usage()
+			os.Exit(2)
+		}
+		fmt.Print(resume.Pick(resume.Dir(), os.Args[2]))
 	case "status":
 		if len(os.Args) < 3 {
 			usage()

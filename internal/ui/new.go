@@ -14,6 +14,7 @@ import (
 
 	"pier/internal/discover"
 	"pier/internal/newsess"
+	"pier/internal/resume"
 	"pier/internal/tmux"
 )
 
@@ -151,6 +152,13 @@ func (m pickerModel) confirm(i int, command string) (tea.Model, tea.Cmd) {
 			mm := m
 			mm.errMsg = "mkdir: " + err.Error()
 			return mm, nil
+		}
+	}
+	if command == cmdClaude {
+		// A session lost here to a crash or OS shutdown picks up where it
+		// left off instead of starting blank.
+		if sid := resume.Pick(resume.Dir(), cand.Path); sid != "" {
+			command = cmdClaude + " --resume " + sid
 		}
 	}
 	if err := tmux.NewSessionAndSwitch(name, cand.Path, command); err != nil {

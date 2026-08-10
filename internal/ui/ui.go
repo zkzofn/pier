@@ -16,6 +16,7 @@ import (
 	"github.com/muesli/reflow/truncate"
 
 	"pier/internal/discover"
+	"pier/internal/resume"
 	"pier/internal/state"
 	"pier/internal/tmux"
 )
@@ -23,16 +24,16 @@ import (
 const pollInterval = 2 * time.Second
 
 var (
-	styleHeader  = lipgloss.NewStyle().Faint(true)
-	stylePath    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	styleBranch  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleCursor  = lipgloss.NewStyle().Reverse(true)
+	styleHeader = lipgloss.NewStyle().Faint(true)
+	stylePath   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	styleBranch = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleCursor = lipgloss.NewStyle().Reverse(true)
 	// Current session: full-row highlight so it pops at a glance.
 	styleCurrent = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("30"))
-	styleDim     = lipgloss.NewStyle().Faint(true)
-	styleErr     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleDim = lipgloss.NewStyle().Faint(true)
+	styleErr = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 
 	iconStyles = map[string]lipgloss.Style{
 		state.Working:    lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
@@ -173,6 +174,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.ClearScreen
 
 	case tickMsg:
+		// The sidebar doubles as the machine's heartbeat: after a shutdown
+		// the file's frozen mtime tells resume-pick when the system was last
+		// alive (throttled inside to one touch a minute).
+		resume.HeartbeatTick(resume.Dir())
 		return m, tea.Batch(refresh, tick())
 
 	case watchMsg:

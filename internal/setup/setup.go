@@ -119,6 +119,8 @@ var hookEvents = []struct {
 	// no matcher: fire on every source (startup|resume|clear|compact);
 	// pier itself ignores compact.
 	{"SessionStart", "session-start", false},
+	// retires the live-session marker (crash/shutdown auto-resume).
+	{"SessionEnd", "session-end", false},
 }
 
 // ClaudeHooks merges pier's hook entries into Claude Code's settings.json,
