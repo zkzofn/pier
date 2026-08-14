@@ -1,15 +1,25 @@
-// The new-session picker: runs inside a tmux popup (`pier new`).
+// The new-session picker: runs inside a tmux popup (`pier new`) or
+// standalone in a plain terminal (`cl` outside tmux — attaches on exit).
 // Pick a directory → the session name follows it; Tab edits the name.
 // Enter starts Claude Code there, ctrl+s a plain shell.
+//
+// Directories where a session died (crash, power loss, OS shutdown) carry a
+// ↻ resume button: →/Enter resumes that conversation, plain Enter starts
+// blank and leaves the record alone. With any casualties present, a
+// "restore all" row on top brings back the whole pre-shutdown layout.
 package ui
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
+	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/truncate"
 
 	"pier/internal/discover"
@@ -24,56 +34,85 @@ var (
 	styleOpen   = lipgloss.NewStyle().Faint(true)
 	styleHint   = lipgloss.NewStyle().Faint(true)
 	styleNewErr = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleResume = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	styleTg     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 )
+
+// tmux draws East-Asian-ambiguous runes (…, ↻, ▸) one cell wide regardless
+// of locale, but go-runewidth — the ruler behind reflow's truncate and
+// PrintableRuneWidth — switches them to two cells under CJK LANGs. Pin the
+// ruler to what tmux renders so padding and truncation stay cell-accurate.
+func init() { runewidth.DefaultCondition.EastAsianWidth = false }
 
 const listTop = 2 // line 0: filter, line 1: blank, then the list
 
-// what the new session's main pane runs
+// resume button faces; same cell width, so focus never shifts the row
 const (
-	cmdClaude = "claude"
-	cmdShell  = "" // empty: tmux's default shell
+	btnResume      = " ↻ resume "
+	btnResumeFocus = "[↻ resume]"
 )
 
+// what the new session's main pane runs
+const cmdShell = "" // empty: tmux's default shell
+
 type pickerModel struct {
-	home     string
-	all      []newsess.Candidate
-	filtered []newsess.Candidate
-	manual   *newsess.Candidate
-	taken    map[string]bool
-	query    string
-	cursor   int
-	scroll   int
-	editing  bool
-	name     string
-	width    int
-	height   int
-	errMsg   string
+	home       string
+	insideTmux bool
+	all        []newsess.Candidate
+	filtered   []newsess.Candidate
+	manual     *newsess.Candidate
+	taken      map[string]bool
+	casualties map[string]resume.Casualty // by cleaned cwd
+	query      string
+	cursor     int
+	scroll     int
+	onResume   bool // focus sits on the cursor row's ↻ resume button
+	telegram   bool // ^T: start claude with the telegram channel attached
+	editing    bool
+	name       string
+	attach     string // standalone: session to exec-attach after the TUI exits
+	width      int
+	height     int
+	errMsg     string
 }
 
-// RunNew starts the picker TUI (intended for a tmux display-popup).
+// RunNew starts the picker TUI — in a tmux display-popup or standalone.
 func RunNew() error {
-	if os.Getenv("TMUX") == "" {
-		return fmt.Errorf("not inside tmux")
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
+	insideTmux := os.Getenv("TMUX") != ""
 	panes, err := tmux.ListPanes()
 	if err != nil {
-		return err
+		if insideTmux {
+			return err
+		}
+		panes = nil // no tmux server yet — nothing is open, that's fine
+	}
+	casualties := map[string]resume.Casualty{}
+	for _, c := range resume.List(resume.Dir()) {
+		casualties[c.CWD] = c
 	}
 	m := pickerModel{
-		home:   home,
-		all:    newsess.Collect(home, panes),
-		taken:  tmux.SessionNames(),
-		width:  46,
-		height: 18,
+		home:       home,
+		insideTmux: insideTmux,
+		all:        newsess.Collect(home, panes),
+		taken:      tmux.SessionNames(),
+		casualties: casualties,
+		width:      46,
+		height:     18,
 	}
 	m.refilter()
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err = p.Run()
-	return err
+	final, err := p.Run()
+	if err != nil {
+		return err
+	}
+	if fm, ok := final.(pickerModel); ok && fm.attach != "" {
+		return tmux.AttachExec(fm.attach)
+	}
+	return nil
 }
 
 func (m pickerModel) Init() tea.Cmd { return nil }
@@ -84,23 +123,46 @@ func (m *pickerModel) refilter() {
 	if len(m.filtered) == 0 {
 		m.manual = newsess.Manual(m.home, m.query)
 	}
-	if n := m.itemCount(); m.cursor >= n {
-		m.cursor = n - 1
+	// Land on the first directory, never the restore-all row: a reflexive
+	// Enter at boot must not resume every casualty at once (it stays one ↑
+	// away).
+	m.cursor = 0
+	if m.restoreRow() && m.itemCount() > 1 {
+		m.cursor = 1
 	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
+	m.scroll = 0
+	m.onResume = false
 	m.errMsg = ""
 }
 
+// restoreRow reports whether the "restore all" row is shown (list top).
+func (m pickerModel) restoreRow() bool {
+	return m.query == "" && m.manual == nil && len(m.casualties) > 0
+}
+
+// isRestoreAll reports whether list index i is the restore-all row.
+func (m pickerModel) isRestoreAll(i int) bool {
+	return m.restoreRow() && i == 0
+}
+
 func (m pickerModel) itemCount() int {
+	n := len(m.filtered)
 	if m.manual != nil {
-		return 1
+		n = 1
 	}
-	return len(m.filtered)
+	if m.restoreRow() {
+		n++
+	}
+	return n
 }
 
 func (m pickerModel) itemAt(i int) *newsess.Candidate {
+	if m.restoreRow() {
+		if i == 0 {
+			return nil // the restore-all row is not a directory
+		}
+		i--
+	}
 	if m.manual != nil {
 		if i == 0 {
 			return m.manual
@@ -111,6 +173,15 @@ func (m pickerModel) itemAt(i int) *newsess.Candidate {
 		return nil
 	}
 	return &m.filtered[i]
+}
+
+// casualtyFor returns the dead session waiting in cand's directory, if any.
+func (m pickerModel) casualtyFor(cand *newsess.Candidate) (resume.Casualty, bool) {
+	if cand == nil || cand.Manual || cand.Open != "" {
+		return resume.Casualty{}, false
+	}
+	c, ok := m.casualties[filepath.Clean(cand.Path)]
+	return c, ok
 }
 
 func (m pickerModel) visibleRows() int {
@@ -133,38 +204,126 @@ func (m *pickerModel) clampScroll() {
 	}
 }
 
-func (m pickerModel) confirm(i int, command string) (tea.Model, tea.Cmd) {
+// claudeCmd is what a new Claude Code pane runs, ^T state included.
+func (m pickerModel) claudeCmd() string {
+	if m.telegram {
+		return "claude --channels plugin:telegram@claude-plugins-official"
+	}
+	return "claude"
+}
+
+// launch creates the session — switching to it inside tmux, deferring an
+// exec-attach when standalone.
+func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
+	if m.insideTmux {
+		if err := tmux.NewSessionAndSwitch(name, path, command); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+	} else {
+		if err := tmux.NewSessionDetached(name, path, command); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		m.attach = name
+	}
+	return m, tea.Quit
+}
+
+func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
+	if m.isRestoreAll(i) {
+		if shell {
+			return m, nil
+		}
+		return m.restoreAll()
+	}
 	cand := m.itemAt(i)
 	if cand == nil {
 		return m, nil
 	}
 	if cand.Open != "" {
-		_ = tmux.SwitchTo(cand.Open)
+		if m.insideTmux {
+			_ = tmux.SwitchTo(cand.Open)
+			return m, tea.Quit
+		}
+		m.attach = cand.Open
 		return m, tea.Quit
 	}
+
+	command := m.claudeCmd()
 	name := cand.Name
-	if m.editing && strings.TrimSpace(m.name) != "" {
-		name = newsess.Sanitize(strings.TrimSpace(m.name))
+	resumeSID := ""
+	if !shell && m.onResume {
+		// The ↻ button: continue the dead conversation, under its old
+		// session name when we know it.
+		if c, ok := m.casualtyFor(cand); ok {
+			command += " --resume " + c.SID
+			resumeSID = c.SID
+			if c.Session != "" {
+				name = c.Session
+			}
+		}
 	}
-	name = newsess.Unique(name, m.taken)
+	if shell {
+		command = cmdShell
+	}
+	if m.editing && strings.TrimSpace(m.name) != "" {
+		name = strings.TrimSpace(m.name)
+	}
+	name = newsess.Unique(newsess.Sanitize(name), m.taken)
+
 	if cand.NeedsMkdir {
 		if err := os.MkdirAll(cand.Path, 0o755); err != nil {
-			mm := m
-			mm.errMsg = "mkdir: " + err.Error()
-			return mm, nil
+			m.errMsg = "mkdir: " + err.Error()
+			return m, nil
 		}
 	}
-	if command == cmdClaude {
-		// A session lost here to a crash or OS shutdown picks up where it
-		// left off instead of starting blank.
-		if sid := resume.Pick(resume.Dir(), cand.Path); sid != "" {
-			command = cmdClaude + " --resume " + sid
+	mm, cmd := m.launch(name, cand.Path, command)
+	if resumeSID != "" && mm.(pickerModel).errMsg == "" {
+		// Only an actual resume retires the record; starting blank (plain
+		// Enter) leaves the offer around until it expires.
+		resume.Consume(resume.Dir(), resumeSID)
+	}
+	return mm, cmd
+}
+
+// restoreAll recreates every casualty as its own session (old name when
+// recorded, else the directory name) and jumps to the most recent one.
+// Failed ones keep their records and show up again next time.
+func (m pickerModel) restoreAll() (tea.Model, tea.Cmd) {
+	cs := make([]resume.Casualty, 0, len(m.casualties))
+	for _, c := range m.casualties {
+		cs = append(cs, c)
+	}
+	sort.Slice(cs, func(i, j int) bool { return cs[i].LastActive.After(cs[j].LastActive) })
+
+	dir := resume.Dir()
+	newest := ""
+	var failed []string
+	for _, c := range cs {
+		base := c.Session
+		if base == "" {
+			base = filepath.Base(c.CWD)
+		}
+		name := newsess.Unique(newsess.Sanitize(base), m.taken)
+		if err := tmux.NewSessionDetached(name, c.CWD, m.claudeCmd()+" --resume "+c.SID); err != nil {
+			failed = append(failed, filepath.Base(c.CWD))
+			continue
+		}
+		m.taken[name] = true
+		resume.Consume(dir, c.SID)
+		if newest == "" {
+			newest = name
 		}
 	}
-	if err := tmux.NewSessionAndSwitch(name, cand.Path, command); err != nil {
-		mm := m
-		mm.errMsg = err.Error()
-		return mm, nil
+	if newest == "" {
+		m.errMsg = "restore failed: " + strings.Join(failed, ", ")
+		return m, nil
+	}
+	if m.insideTmux {
+		_ = tmux.SwitchTo(newest)
+	} else {
+		m.attach = newest
 	}
 	return m, tea.Quit
 }
@@ -183,11 +342,13 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonWheelUp:
 			if m.cursor > 0 {
 				m.cursor--
+				m.onResume = false
 				m.clampScroll()
 			}
 		case tea.MouseButtonWheelDown:
 			if m.cursor < m.itemCount()-1 {
 				m.cursor++
+				m.onResume = false
 				m.clampScroll()
 			}
 		case tea.MouseButtonLeft:
@@ -195,9 +356,15 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			i := msg.Y - listTop + m.scroll
-			if m.itemAt(i) != nil {
+			if m.isRestoreAll(i) {
 				m.cursor = i
-				return m.confirm(i, cmdClaude)
+				return m.restoreAll()
+			}
+			if cand := m.itemAt(i); cand != nil {
+				m.cursor = i
+				_, has := m.casualtyFor(cand)
+				m.onResume = has && msg.X >= m.width-1-ansi.PrintableRuneWidth(btnResume)
+				return m.confirm(i, false)
 			}
 		}
 		return m, nil
@@ -206,9 +373,9 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editing {
 			switch msg.String() {
 			case "enter":
-				return m.confirm(m.cursor, cmdClaude)
+				return m.confirm(m.cursor, false)
 			case "ctrl+s":
-				return m.confirm(m.cursor, cmdShell)
+				return m.confirm(m.cursor, true)
 			case "esc":
 				m.editing = false
 				m.name = ""
@@ -228,22 +395,33 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "ctrl+c":
 			return m, tea.Quit
 		case "enter":
-			return m.confirm(m.cursor, cmdClaude)
+			return m.confirm(m.cursor, false)
 		case "ctrl+s":
-			return m.confirm(m.cursor, cmdShell)
+			return m.confirm(m.cursor, true)
+		case "ctrl+t":
+			m.telegram = !m.telegram
+		case "right":
+			if _, ok := m.casualtyFor(m.itemAt(m.cursor)); ok {
+				m.onResume = true
+			}
+		case "left":
+			m.onResume = false
 		case "tab":
 			if cand := m.itemAt(m.cursor); cand != nil && cand.Open == "" {
 				m.editing = true
+				m.onResume = false
 				m.name = newsess.Unique(cand.Name, m.taken)
 			}
 		case "up", "ctrl+p":
 			if m.cursor > 0 {
 				m.cursor--
+				m.onResume = false
 				m.clampScroll()
 			}
 		case "down", "ctrl+n":
 			if m.cursor < m.itemCount()-1 {
 				m.cursor++
+				m.onResume = false
 				m.clampScroll()
 			}
 		case "backspace":
@@ -267,7 +445,12 @@ func (m pickerModel) View() string {
 	w := uint(m.width - 1) // ambiguous-width guard, same as the sidebar
 	var b strings.Builder
 	line := func(s string) {
-		b.WriteString(truncate.StringWithTail(s, w, "…"))
+		// reflow reserves the tail's cells before comparing, so it would trim
+		// rows that fit exactly; only truncate genuine overflow.
+		if ansi.PrintableRuneWidth(s) > int(w) {
+			s = truncate.StringWithTail(s, w, "…")
+		}
+		b.WriteString(s)
 		b.WriteString("\n")
 	}
 
@@ -287,10 +470,28 @@ func (m pickerModel) View() string {
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
-	line(" " + stylePrompt.Render("> ") + m.query + "█")
+	head := " " + stylePrompt.Render("> ") + m.query + "█"
+	if m.telegram {
+		badge := styleTg.Render("tg✓")
+		pad := int(w) - ansi.PrintableRuneWidth(head) - ansi.PrintableRuneWidth(badge) - 1
+		if pad > 0 {
+			head += strings.Repeat(" ", pad) + badge
+		}
+	}
+	line(head)
 	line("")
 	shown := 0
 	for i := m.scroll; i < m.itemCount() && shown < m.visibleRows(); i++ {
+		if m.isRestoreAll(i) {
+			label := fmt.Sprintf("↻ restore all (%d)", len(m.casualties))
+			if i == m.cursor {
+				line("▸ " + stylePick.Render(label))
+			} else {
+				line("  " + styleResume.Render(label))
+			}
+			shown++
+			continue
+		}
 		cand := m.itemAt(i)
 		prefix, label := "  ", ""
 		switch {
@@ -303,9 +504,35 @@ func (m pickerModel) View() string {
 		default:
 			label = cand.Name + "  " + styleHint.Render(discover.ShortPath(cand.Path))
 		}
+		onBtn := i == m.cursor && m.onResume
 		if i == m.cursor {
 			prefix = "▸ "
-			label = stylePick.Render(label)
+			if !onBtn {
+				label = stylePick.Render(label)
+			}
+		}
+		if _, has := m.casualtyFor(cand); has {
+			// Reserve the button's columns so it never gets truncated away.
+			btn := btnResume
+			if onBtn {
+				btn = btnResumeFocus
+			}
+			avail := int(w) - ansi.PrintableRuneWidth(prefix) - ansi.PrintableRuneWidth(btn) - 1
+			if avail < 1 {
+				avail = 1
+			}
+			if ansi.PrintableRuneWidth(label) > avail {
+				label = truncate.StringWithTail(label, uint(avail), "…")
+			}
+			pad := avail - ansi.PrintableRuneWidth(label) + 1
+			if pad < 1 {
+				pad = 1
+			}
+			styled := styleResume.Render(btn)
+			if onBtn {
+				styled = stylePick.Reverse(true).Render(btn)
+			}
+			label += strings.Repeat(" ", pad) + styled
 		}
 		line(prefix + label)
 		shown++
@@ -316,6 +543,8 @@ func (m pickerModel) View() string {
 	line("")
 	if m.errMsg != "" {
 		line(" " + styleNewErr.Render(m.errMsg))
+	} else if len(m.casualties) > 0 {
+		line(" " + styleHint.Render("Enter: new · → resume · ^S · ^T tg · Esc"))
 	} else {
 		line(" " + styleHint.Render("Enter: create · ^S: shell · Tab: name · Esc"))
 	}

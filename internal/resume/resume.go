@@ -1,21 +1,25 @@
 // Package resume tracks live Claude Code sessions so that ones killed
 // without warning — SIGKILL, kernel panic, power loss, an OS shutdown
-// tearing tmux down — can be picked up automatically the next time a
-// session starts in the same directory.
+// tearing tmux down — can be offered for resumption in the new-session
+// picker.
 //
 // Everything lives under ~/.claude/live-sessions:
 //
-//   - <session-id>.json marker {cwd,pid}: written on every user prompt
-//     (UserPromptSubmit), removed on SessionEnd. A leftover marker whose
-//     pid is gone means the session died with no chance to run its hooks —
-//     a crash.
-//   - ended.jsonl {sid,cwd,reason,ended_at}: appended when a session that
-//     had a marker ends normally. A clean OS shutdown *does* give hooks a
-//     chance to run, so its casualties look "ended" — they are told apart
-//     by time instead: the sidebar touches .heartbeat-<boot-epoch> every
-//     minute, the file's mtime freezes when the system stops, and entries
-//     that ended within that final window of a previous boot are
-//     reclassified as shutdown casualties.
+//   - <session-id>.json marker {cwd,pid,session}: written on every user
+//     prompt (UserPromptSubmit), removed on SessionEnd. A leftover marker
+//     whose pid is gone means the session died with no chance to run its
+//     hooks — a crash.
+//   - ended.jsonl {sid,cwd,session,reason,ended_at}: appended when a
+//     session that had a marker ends normally. A clean OS shutdown *does*
+//     give hooks a chance to run, so its casualties look "ended" — they
+//     are told apart by time instead: the sidebar touches
+//     .heartbeat-<boot-epoch> every minute, the file's mtime freezes when
+//     the system stops, and entries that ended within that final window
+//     of a previous boot are reclassified as shutdown casualties.
+//
+// List surfaces casualties without consuming them: declining an offer (by
+// starting a fresh conversation) keeps the record around, and only an
+// actual resume (Consume) or expiry retires it.
 //
 // Prompt-driven (not SessionStart) on purpose: in-process teammate and
 // subagent sessions never receive user prompts, so only real user sessions
@@ -34,6 +38,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"pier/internal/tmux"
 )
 
 const (
@@ -43,6 +49,10 @@ const (
 	// must have ended to count as a shutdown casualty: one heartbeat period
 	// plus slack for the shutdown itself.
 	shutdownWindow = 90
+	// casualtyKeep is how long a casualty stays on offer. The picker never
+	// consumes records the user didn't act on, so expiry is what keeps
+	// declined offers from lingering forever.
+	casualtyKeep = 7 * 24 * time.Hour
 	// ended.jsonl is trimmed to entries younger than endedKeepDays once it
 	// outgrows endedMaxSize.
 	endedMaxSize  = 64 * 1024
@@ -51,13 +61,15 @@ const (
 )
 
 type marker struct {
-	CWD string `json:"cwd"`
-	PID int    `json:"pid"`
+	CWD     string `json:"cwd"`
+	PID     int    `json:"pid"`
+	Session string `json:"session,omitempty"` // tmux session name, for restore
 }
 
 type endedRec struct {
 	SID     string `json:"sid"`
 	CWD     string `json:"cwd"`
+	Session string `json:"session,omitempty"`
 	Reason  string `json:"reason"`
 	EndedAt int64  `json:"ended_at"`
 }
@@ -66,6 +78,14 @@ type hookPayload struct {
 	SessionID string `json:"session_id"`
 	CWD       string `json:"cwd"`
 	Reason    string `json:"reason"` // SessionEnd only
+}
+
+// Casualty is a Claude Code session that died without the user asking it to.
+type Casualty struct {
+	SID        string
+	CWD        string
+	Session    string // tmux session name at its last prompt ("" on old records)
+	LastActive time.Time
 }
 
 // deliberateEnd lists SessionEnd reasons where the user closed or replaced
@@ -86,6 +106,15 @@ func Dir() string {
 	return filepath.Join(home, ".claude", "live-sessions")
 }
 
+// sessionName resolves the tmux session the hook's Claude Code runs in, ""
+// outside tmux. Swappable for tests.
+var sessionName = func() string {
+	if os.Getenv("TMUX_PANE") == "" {
+		return ""
+	}
+	return tmux.CurrentSession()
+}
+
 // RecordPrompt (UserPromptSubmit hook) marks the session live: it writes the
 // marker, whose mtime doubles as the last-activity time.
 func RecordPrompt(dir string, payload []byte) error {
@@ -96,7 +125,7 @@ func RecordPrompt(dir string, payload []byte) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	data, err := json.Marshal(marker{CWD: p.CWD, PID: claudePID()})
+	data, err := json.Marshal(marker{CWD: p.CWD, PID: claudePID(), Session: sessionName()})
 	if err != nil {
 		return err
 	}
@@ -112,140 +141,156 @@ func RecordEnd(dir string, payload []byte) error {
 		return nil
 	}
 	mpath := filepath.Join(dir, p.SessionID+".json")
-	if _, err := os.Stat(mpath); err != nil {
+	data, err := os.ReadFile(mpath)
+	if err != nil {
 		return nil
 	}
+	var m marker
+	_ = json.Unmarshal(data, &m)
 	reason := p.Reason
 	if reason == "" {
 		reason = "?"
 	}
 	if rec, err := json.Marshal(endedRec{
-		SID: p.SessionID, CWD: p.CWD, Reason: reason, EndedAt: time.Now().Unix(),
+		SID: p.SessionID, CWD: p.CWD, Session: m.Session,
+		Reason: reason, EndedAt: time.Now().Unix(),
 	}); err == nil {
 		appendEnded(dir, rec)
 	}
 	return os.Remove(mpath)
 }
 
-// Pick returns the session id to resume for a new session starting in cwd,
-// or "" when there is nothing to recover. Crashed sessions (stale marker)
-// win over shutdown casualties (ended.jsonl near a frozen heartbeat).
-// Whatever it returns — and every record that matched — is consumed, so a
-// session is only ever offered once.
-func Pick(dir, cwd string) string {
+// List returns every current casualty, newest first, one per directory —
+// without consuming anything. Crashes (stale markers) and shutdown
+// casualties (ended.jsonl near a frozen heartbeat) both count.
+func List(dir string) []Casualty {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return nil
 	}
 	projects := filepath.Join(home, ".claude", "projects")
-	if sid := pickCrashed(dir, projects, cwd, claudeAlive); sid != "" {
-		return sid
-	}
-	return pickShutdown(dir, projects, cwd, bootUnix())
+	return list(dir, projects, claudeAlive, bootUnix(), time.Now())
 }
 
-// pickCrashed scans markers recorded in cwd whose process is gone and picks
-// the one with the most recent activity that still has a transcript. All of
-// the cwd's stale markers are consumed — one resurrection per crash; any
-// others remain reachable via `claude -r`.
-func pickCrashed(dir, projectsDir, cwd string, alive func(pid int) bool) string {
+func list(dir, projectsDir string, alive func(pid int) bool, boot int64, now time.Time) []Casualty {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return ""
+		return nil
 	}
-	cwd = filepath.Clean(cwd)
-	type cand struct {
-		sid   string
-		mtime time.Time
-	}
-	var stale []cand
+	cutoff := now.Add(-casualtyKeep)
+	var all []Casualty
+
+	// Crashes: leftover markers whose process is gone.
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		var m marker
-		if json.Unmarshal(data, &m) != nil || filepath.Clean(m.CWD) != cwd {
-			continue
-		}
-		if alive(m.PID) {
+		if json.Unmarshal(data, &m) != nil || alive(m.PID) {
 			continue
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
-		stale = append(stale, cand{sid: strings.TrimSuffix(name, ".json"), mtime: info.ModTime()})
+		sid := strings.TrimSuffix(name, ".json")
+		// A dead marker is an offer or garbage; expired and transcript-less
+		// ones are reaped here, since declined offers are never consumed.
+		if info.ModTime().Before(cutoff) || !hasTranscript(projectsDir, sid) {
+			_ = os.Remove(path)
+			continue
+		}
+		all = append(all, Casualty{
+			SID: sid, CWD: filepath.Clean(m.CWD),
+			Session: m.Session, LastActive: info.ModTime(),
+		})
 	}
-	if len(stale) == 0 {
-		return ""
-	}
-	sort.Slice(stale, func(i, j int) bool { return stale[i].mtime.After(stale[j].mtime) })
-	best := ""
-	for _, c := range stale {
-		_ = os.Remove(filepath.Join(dir, c.sid+".json"))
-		if best == "" && hasTranscript(projectsDir, c.sid) {
-			best = c.sid
+
+	// Shutdown casualties: cleanly-ended sessions from a previous boot whose
+	// end hugs that boot's frozen heartbeat.
+	if boot > 0 {
+		if beats := prevHeartbeats(dir, boot); len(beats) > 0 {
+			data, _ := os.ReadFile(filepath.Join(dir, endedLog))
+			for _, line := range bytes.Split(data, []byte("\n")) {
+				if len(line) == 0 {
+					continue
+				}
+				var r endedRec
+				if json.Unmarshal(line, &r) != nil || !validSID(r.SID) {
+					continue
+				}
+				at := time.Unix(r.EndedAt, 0)
+				if r.EndedAt >= boot || deliberateEnd[r.Reason] || !nearAny(beats, r.EndedAt) ||
+					at.Before(cutoff) || !hasTranscript(projectsDir, r.SID) {
+					continue
+				}
+				all = append(all, Casualty{
+					SID: r.SID, CWD: filepath.Clean(r.CWD),
+					Session: r.Session, LastActive: at,
+				})
+			}
 		}
 	}
-	return best
+
+	// One comeback offer per directory: the most recent. Older ones stay
+	// reachable via `claude -r` until they expire.
+	sort.Slice(all, func(i, j int) bool { return all[i].LastActive.After(all[j].LastActive) })
+	seen := map[string]bool{}
+	out := all[:0]
+	for _, c := range all {
+		if seen[c.CWD] {
+			continue
+		}
+		seen[c.CWD] = true
+		out = append(out, c)
+	}
+	return out
 }
 
-// pickShutdown reclassifies "cleanly ended" sessions that were actually torn
-// down by an OS shutdown/reboot: entries from a previous boot that ended
-// within shutdownWindow of a frozen heartbeat, minus deliberate exits.
-// Every matching entry for the cwd is consumed.
-func pickShutdown(dir, projectsDir, cwd string, boot int64) string {
-	if boot <= 0 {
-		return ""
+// Consume erases every record of sid. Called right after a resume actually
+// launches — declining an offer keeps the record, expiry retires it.
+func Consume(dir, sid string) {
+	if !validSID(sid) {
+		return
 	}
-	beats := prevHeartbeats(dir, boot)
-	if len(beats) == 0 {
-		return ""
-	}
+	_ = os.Remove(filepath.Join(dir, sid+".json"))
 	path := filepath.Join(dir, endedLog)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return
 	}
-	cwd = filepath.Clean(cwd)
-	best, bestAt := "", int64(0)
 	var keep []byte
-	consumed := false
+	removed := false
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
 		var r endedRec
-		if json.Unmarshal(line, &r) == nil &&
-			filepath.Clean(r.CWD) == cwd && r.EndedAt < boot &&
-			!deliberateEnd[r.Reason] && nearAny(beats, r.EndedAt) {
-			consumed = true
-			if validSID(r.SID) && r.EndedAt > bestAt && hasTranscript(projectsDir, r.SID) {
-				best, bestAt = r.SID, r.EndedAt
-			}
+		if json.Unmarshal(line, &r) == nil && r.SID == sid {
+			removed = true
 			continue
 		}
 		keep = append(keep, line...)
 		keep = append(keep, '\n')
 	}
-	if consumed {
+	if removed {
 		tmp := path + ".tmp"
 		if os.WriteFile(tmp, keep, 0o644) == nil {
 			_ = os.Rename(tmp, path)
 		}
 	}
-	return best
 }
 
 // HeartbeatTick keeps .heartbeat-<boot-epoch> fresh; the sidebar calls it on
 // its poll tick. Throttled to one touch a minute — the point is only that
 // the mtime freezes near the moment the system stops running. Files from
-// previous boots are left alone (pickShutdown reads them) until reaped.
+// previous boots are left alone (List reads them) until reaped.
 func HeartbeatTick(dir string) {
 	heartbeatTick(dir, bootUnix())
 }

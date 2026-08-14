@@ -14,14 +14,15 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.10.0"
+const version = "0.11.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
 usage:
   pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
   pier run                  run the sidebar TUI (inside a tmux pane)
-  pier new                  new-session picker (sidebar "+" / prefix+N)
+  pier new                  new-session picker (sidebar "+" / prefix+N /
+                              standalone outside tmux — attaches on create)
   pier keys                 keybinding cheatsheet (sidebar "?")
   pier ensure [-t session]  create the sidebar in a session if missing
   pier toggle [-t session]  toggle the sidebar pane
@@ -31,9 +32,6 @@ usage:
                               events: user-prompt-submit | pre-tool-use |
                                       stop | permission-request |
                                       session-start | session-end
-  pier resume-pick <dir>    print (and consume) the session id of a Claude
-                              session lost in <dir> to a crash or an OS
-                              shutdown — empty when there is none
   pier status <path>        print "path ⎇ branch" for tmux status-right
   pier version              print version
 `
@@ -79,12 +77,6 @@ func main() {
 			_ = resume.RecordEnd(resume.Dir(), payload)
 		}
 		err = state.Record(state.Dir(), os.Args[2], payload)
-	case "resume-pick":
-		if len(os.Args) < 3 {
-			usage()
-			os.Exit(2)
-		}
-		fmt.Print(resume.Pick(resume.Dir(), os.Args[2]))
 	case "status":
 		if len(os.Args) < 3 {
 			usage()

@@ -10,9 +10,15 @@ import (
 	"time"
 )
 
-func writeMarker(t *testing.T, dir, sid, cwd string, pid int, mtime time.Time) {
+func TestMain(m *testing.M) {
+	// Keep unit tests off the real tmux server.
+	sessionName = func() string { return "" }
+	os.Exit(m.Run())
+}
+
+func writeMarker(t *testing.T, dir, sid, cwd, session string, pid int, mtime time.Time) {
 	t.Helper()
-	data, _ := json.Marshal(marker{CWD: cwd, PID: pid})
+	data, _ := json.Marshal(marker{CWD: cwd, PID: pid, Session: session})
 	path := filepath.Join(dir, sid+".json")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
@@ -80,6 +86,16 @@ func writeHeartbeat(t *testing.T, dir string, epoch int64, mtime time.Time) {
 	}
 }
 
+func sids(cs []Casualty) string {
+	var s []string
+	for _, c := range cs {
+		s = append(s, c.SID)
+	}
+	return strings.Join(s, ",")
+}
+
+var dead = func(int) bool { return false }
+
 func TestRecordPromptWritesMarker(t *testing.T) {
 	dir := t.TempDir()
 	payload := []byte(`{"session_id":"aaaa-1111","cwd":"/work/x","prompt":"hi"}`)
@@ -102,6 +118,24 @@ func TestRecordPromptWritesMarker(t *testing.T) {
 	}
 }
 
+func TestRecordPromptRecordsSessionName(t *testing.T) {
+	dir := t.TempDir()
+	sessionName = func() string { return "mysess" }
+	defer func() { sessionName = func() string { return "" } }()
+
+	if err := RecordPrompt(dir, []byte(`{"session_id":"aaaa-2222","cwd":"/w"}`)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "aaaa-2222.json"))
+	var m marker
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Session != "mysess" {
+		t.Errorf("session = %q, want mysess", m.Session)
+	}
+}
+
 func TestRecordPromptRejectsBadSID(t *testing.T) {
 	dir := t.TempDir()
 	for _, payload := range []string{
@@ -121,7 +155,7 @@ func TestRecordPromptRejectsBadSID(t *testing.T) {
 
 func TestRecordEnd(t *testing.T) {
 	dir := t.TempDir()
-	writeMarker(t, dir, "bbbb-2222", "/work/y", 1, time.Now())
+	writeMarker(t, dir, "bbbb-2222", "/work/y", "sess-y", 1, time.Now())
 
 	payload := []byte(`{"session_id":"bbbb-2222","cwd":"/work/y","reason":"clear"}`)
 	if err := RecordEnd(dir, payload); err != nil {
@@ -137,6 +171,9 @@ func TestRecordEnd(t *testing.T) {
 	r := recs[0]
 	if r.SID != "bbbb-2222" || r.CWD != "/work/y" || r.Reason != "clear" {
 		t.Errorf("bad record: %+v", r)
+	}
+	if r.Session != "sess-y" {
+		t.Errorf("session not carried over: %+v", r)
 	}
 	if d := time.Now().Unix() - r.EndedAt; d < 0 || d > 5 {
 		t.Errorf("ended_at drift: %d", d)
@@ -156,7 +193,7 @@ func TestRecordEndWithoutMarkerIsSilent(t *testing.T) {
 
 func TestRecordEndDefaultsReason(t *testing.T) {
 	dir := t.TempDir()
-	writeMarker(t, dir, "dddd-4444", "/w", 1, time.Now())
+	writeMarker(t, dir, "dddd-4444", "/w", "", 1, time.Now())
 	if err := RecordEnd(dir, []byte(`{"session_id":"dddd-4444","cwd":"/w"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -165,110 +202,112 @@ func TestRecordEndDefaultsReason(t *testing.T) {
 	}
 }
 
-func TestPickCrashedPicksNewestAndConsumes(t *testing.T) {
+func TestListCrashed(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	now := time.Now()
-	writeMarker(t, dir, "old-1", "/w", 0, now.Add(-2*time.Hour))
-	writeMarker(t, dir, "new-1", "/w", 0, now.Add(-time.Minute))
-	writeTranscript(t, projects, "old-1")
-	writeTranscript(t, projects, "new-1")
-
-	dead := func(int) bool { return false }
-	if got := pickCrashed(dir, projects, "/w", dead); got != "new-1" {
-		t.Errorf("picked %q, want new-1", got)
+	writeMarker(t, dir, "old-1", "/w", "sess-w", 0, now.Add(-2*time.Hour))
+	writeMarker(t, dir, "other-1", "/elsewhere", "", 0, now.Add(-time.Hour))
+	writeMarker(t, dir, "live-1", "/live", "", 4242, now)
+	for _, sid := range []string{"old-1", "other-1", "live-1"} {
+		writeTranscript(t, projects, sid)
 	}
-	for _, sid := range []string{"old-1", "new-1"} {
-		if _, err := os.Stat(filepath.Join(dir, sid+".json")); !os.IsNotExist(err) {
-			t.Errorf("marker %s not consumed", sid)
-		}
-	}
-	if got := pickCrashed(dir, projects, "/w", dead); got != "" {
-		t.Errorf("second pick = %q, want empty", got)
-	}
-}
-
-func TestPickCrashedKeepsLiveAndOtherCWD(t *testing.T) {
-	dir, projects := t.TempDir(), t.TempDir()
-	now := time.Now()
-	writeMarker(t, dir, "live-1", "/w", 4242, now)
-	writeMarker(t, dir, "other-1", "/elsewhere", 0, now)
-	writeTranscript(t, projects, "live-1")
-	writeTranscript(t, projects, "other-1")
 
 	alive := func(pid int) bool { return pid == 4242 }
-	if got := pickCrashed(dir, projects, "/w", alive); got != "" {
-		t.Errorf("picked %q, want empty", got)
+	got := list(dir, projects, alive, 0, now)
+	if sids(got) != "other-1,old-1" {
+		t.Fatalf("list = %s, want other-1,old-1", sids(got))
 	}
-	for _, sid := range []string{"live-1", "other-1"} {
+	if got[1].Session != "sess-w" || got[1].CWD != "/w" {
+		t.Errorf("casualty fields: %+v", got[1])
+	}
+	// non-consuming: markers survive listing
+	for _, sid := range []string{"old-1", "other-1", "live-1"} {
 		if _, err := os.Stat(filepath.Join(dir, sid+".json")); err != nil {
 			t.Errorf("marker %s should be untouched: %v", sid, err)
 		}
 	}
 }
 
-func TestPickCrashedSkipsMissingTranscript(t *testing.T) {
+func TestListDedupesPerCWD(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	now := time.Now()
-	writeMarker(t, dir, "gone-1", "/w", 0, now)                   // no transcript
-	writeMarker(t, dir, "kept-1", "/w", 0, now.Add(-time.Minute)) // older, has one
-	writeTranscript(t, projects, "kept-1")
+	writeMarker(t, dir, "old-1", "/w", "", 0, now.Add(-2*time.Hour))
+	writeMarker(t, dir, "new-1", "/w", "", 0, now.Add(-time.Minute))
+	writeTranscript(t, projects, "old-1")
+	writeTranscript(t, projects, "new-1")
 
-	if got := pickCrashed(dir, projects, "/w", func(int) bool { return false }); got != "kept-1" {
-		t.Errorf("picked %q, want kept-1", got)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "gone-1.json")); !os.IsNotExist(err) {
-		t.Error("transcript-less marker not consumed")
+	if got := list(dir, projects, dead, 0, now); sids(got) != "new-1" {
+		t.Errorf("list = %s, want new-1", sids(got))
 	}
 }
 
-func TestPickShutdown(t *testing.T) {
+func TestListReapsStaleAndTranscriptless(t *testing.T) {
+	dir, projects := t.TempDir(), t.TempDir()
+	now := time.Now()
+	writeMarker(t, dir, "expired-1", "/w", "", 0, now.Add(-casualtyKeep-time.Hour))
+	writeMarker(t, dir, "gone-1", "/g", "", 0, now) // no transcript
+	writeMarker(t, dir, "kept-1", "/k", "", 0, now)
+	writeTranscript(t, projects, "expired-1")
+	writeTranscript(t, projects, "kept-1")
+
+	if got := list(dir, projects, dead, 0, now); sids(got) != "kept-1" {
+		t.Errorf("list = %s, want kept-1", sids(got))
+	}
+	for _, sid := range []string{"expired-1", "gone-1"} {
+		if _, err := os.Stat(filepath.Join(dir, sid+".json")); !os.IsNotExist(err) {
+			t.Errorf("marker %s not reaped", sid)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "kept-1.json")); err != nil {
+		t.Errorf("live offer reaped: %v", err)
+	}
+}
+
+func TestListShutdown(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	const boot, frozen = int64(2_000_000_000), int64(1_999_990_000)
+	now := time.Unix(frozen+3600, 0)
 	writeHeartbeat(t, dir, boot-100_000, time.Unix(frozen, 0))
 	writeEnded(t, dir,
-		endedRec{SID: "hit-old", CWD: "/w", Reason: "other", EndedAt: frozen - 60},
+		endedRec{SID: "hit-old", CWD: "/w", Session: "sess-w", Reason: "other", EndedAt: frozen - 60},
 		endedRec{SID: "hit-new", CWD: "/w", Reason: "?", EndedAt: frozen + 30},
 		endedRec{SID: "far", CWD: "/w", Reason: "other", EndedAt: frozen - 500},
 		endedRec{SID: "cleared", CWD: "/w", Reason: "clear", EndedAt: frozen + 10},
-		endedRec{SID: "elsewhere", CWD: "/other", Reason: "other", EndedAt: frozen + 20},
+		endedRec{SID: "elsewhere", CWD: "/other", Session: "sess-o", Reason: "other", EndedAt: frozen + 20},
 	)
-	writeTranscript(t, projects, "hit-old")
-	writeTranscript(t, projects, "hit-new")
+	for _, sid := range []string{"hit-old", "hit-new", "far", "cleared", "elsewhere"} {
+		writeTranscript(t, projects, sid)
+	}
 
-	if got := pickShutdown(dir, projects, "/w", boot); got != "hit-new" {
-		t.Errorf("picked %q, want hit-new", got)
+	got := list(dir, projects, dead, boot, now)
+	// window hits only, deduped per cwd, newest first
+	if sids(got) != "hit-new,elsewhere" {
+		t.Fatalf("list = %s, want hit-new,elsewhere", sids(got))
 	}
-	// both window hits consumed; the rest stay
-	var sids []string
-	for _, r := range readEnded(t, dir) {
-		sids = append(sids, r.SID)
+	if got[1].Session != "sess-o" {
+		t.Errorf("session not surfaced: %+v", got[1])
 	}
-	want := []string{"far", "cleared", "elsewhere"}
-	if strings.Join(sids, ",") != strings.Join(want, ",") {
-		t.Errorf("remaining = %v, want %v", sids, want)
-	}
-	if got := pickShutdown(dir, projects, "/w", boot); got != "" {
-		t.Errorf("second pick = %q, want empty", got)
+	// non-consuming: the log is untouched
+	if len(readEnded(t, dir)) != 5 {
+		t.Error("listing consumed ended.jsonl entries")
 	}
 }
 
-func TestPickShutdownNeedsHeartbeatAndBoot(t *testing.T) {
+func TestListShutdownNeedsHeartbeatAndBoot(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	writeEnded(t, dir, endedRec{SID: "x-1", CWD: "/w", Reason: "other", EndedAt: 100})
 	writeTranscript(t, projects, "x-1")
+	now := time.Unix(200, 0)
 
-	if got := pickShutdown(dir, projects, "/w", 0); got != "" {
-		t.Errorf("boot=0 picked %q", got)
+	if got := list(dir, projects, dead, 0, now); len(got) != 0 {
+		t.Errorf("boot=0 listed %s", sids(got))
 	}
-	if got := pickShutdown(dir, projects, "/w", 1000); got != "" {
-		t.Errorf("no heartbeat but picked %q", got)
-	}
-	if len(readEnded(t, dir)) != 1 {
-		t.Error("entries consumed without a pick basis")
+	if got := list(dir, projects, dead, 1000, now); len(got) != 0 {
+		t.Errorf("no heartbeat but listed %s", sids(got))
 	}
 }
 
-func TestPickShutdownIgnoresCurrentBootEntries(t *testing.T) {
+func TestListShutdownIgnoresCurrentBootEntries(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	const boot = int64(1000)
 	// a heartbeat from the *current* epoch must not qualify entries
@@ -276,12 +315,12 @@ func TestPickShutdownIgnoresCurrentBootEntries(t *testing.T) {
 	writeEnded(t, dir, endedRec{SID: "y-1", CWD: "/w", Reason: "other", EndedAt: boot + 490})
 	writeTranscript(t, projects, "y-1")
 
-	if got := pickShutdown(dir, projects, "/w", boot); got != "" {
-		t.Errorf("picked %q from the current epoch", got)
+	if got := list(dir, projects, dead, boot, time.Unix(boot+600, 0)); len(got) != 0 {
+		t.Errorf("listed %s from the current epoch", sids(got))
 	}
 }
 
-func TestPickShutdownMatchesAnyPreviousBoot(t *testing.T) {
+func TestListShutdownMatchesAnyPreviousBoot(t *testing.T) {
 	dir, projects := t.TempDir(), t.TempDir()
 	const boot = int64(3_000_000)
 	writeHeartbeat(t, dir, 1_000_000, time.Unix(1_500_000, 0)) // two boots ago
@@ -289,8 +328,50 @@ func TestPickShutdownMatchesAnyPreviousBoot(t *testing.T) {
 	writeEnded(t, dir, endedRec{SID: "z-1", CWD: "/w", Reason: "other", EndedAt: 1_500_040})
 	writeTranscript(t, projects, "z-1")
 
-	if got := pickShutdown(dir, projects, "/w", boot); got != "z-1" {
-		t.Errorf("picked %q, want z-1", got)
+	if got := list(dir, projects, dead, boot, time.Unix(1_600_000, 0)); sids(got) != "z-1" {
+		t.Errorf("list = %s, want z-1", sids(got))
+	}
+}
+
+func TestListExpiresShutdownEntries(t *testing.T) {
+	dir, projects := t.TempDir(), t.TempDir()
+	const boot, frozen = int64(2_000_000_000), int64(1_999_990_000)
+	writeHeartbeat(t, dir, boot-100_000, time.Unix(frozen, 0))
+	writeEnded(t, dir, endedRec{SID: "w-1", CWD: "/w", Reason: "other", EndedAt: frozen})
+	writeTranscript(t, projects, "w-1")
+
+	now := time.Unix(frozen, 0).Add(casualtyKeep + time.Hour)
+	if got := list(dir, projects, dead, boot, now); len(got) != 0 {
+		t.Errorf("expired shutdown casualty still offered: %s", sids(got))
+	}
+}
+
+func TestConsume(t *testing.T) {
+	dir := t.TempDir()
+	writeMarker(t, dir, "mark-1", "/w", "", 0, time.Now())
+	writeEnded(t, dir,
+		endedRec{SID: "end-1", CWD: "/w", Reason: "other", EndedAt: 100},
+		endedRec{SID: "end-2", CWD: "/v", Reason: "other", EndedAt: 200},
+	)
+
+	Consume(dir, "mark-1")
+	if _, err := os.Stat(filepath.Join(dir, "mark-1.json")); !os.IsNotExist(err) {
+		t.Error("marker not consumed")
+	}
+	if len(readEnded(t, dir)) != 2 {
+		t.Error("consuming a marker touched ended.jsonl")
+	}
+
+	Consume(dir, "end-1")
+	recs := readEnded(t, dir)
+	if len(recs) != 1 || recs[0].SID != "end-2" {
+		t.Errorf("after consume: %+v", recs)
+	}
+
+	Consume(dir, "no-such") // absent sid: no-op, no panic
+	Consume(dir, "../evil") // invalid sid: refused
+	if len(readEnded(t, dir)) != 1 {
+		t.Error("no-op consumes changed the log")
 	}
 }
 
