@@ -24,8 +24,9 @@ See every running Claude Code session at a glance — which worktree and branch 
 - **Jump**: click an item to focus it — even across tmux sessions
 - **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
 - **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
-- **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — pick a directory in a centered popup and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a plain shell session — for when you want a terminal without splitting a pane or opening a new window
-- **Auto-resume**: a Claude Code session lost to a crash, power loss, or OS shutdown isn't gone — the next session created in that directory starts with `claude --resume <that conversation>` instead of blank
+- **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — pick a directory in a centered popup and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a plain shell session — for when you want a terminal without splitting a pane or opening a new window. Outside tmux, `pier new` in a plain terminal opens the same picker and attaches to whatever it creates
+- **Resume**: a Claude Code session lost to a crash, power loss, or OS shutdown isn't gone — its directory grows a `↻ resume` button in the picker. `→` then `Enter` continues that conversation under its old session name; plain `Enter` starts blank and keeps the offer around. With any casualties present, an `↻ restore all` row rebuilds the whole pre-shutdown layout in one stroke
+- **Telegram**: `^T` in the picker (a `tg✓` badge shows it's on) starts the session with Claude Code's telegram channel attached
 - **Help**: click `? help` at the bottom of the sidebar (or press `?`) — a popup with every key above, so none of this needs memorizing
 
 ## Requirements
@@ -104,7 +105,7 @@ Add to `hooks` in `~/.claude/settings.json` (replace `<you>` in the paths):
 }
 ```
 
-Everything except the status icons, prompt labels, and auto-resume — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
+Everything except the status icons, prompt labels, and crash recovery — sidebar, jump, status bar — works without the hooks; icons just stay at `·` (unknown).
 
 </details>
 
@@ -113,7 +114,8 @@ Everything except the status icons, prompt labels, and auto-resume — sidebar, 
 | To do this | Do this |
 |---|---|
 | Jump to another session | **Click** the item in the sidebar |
-| Create a new session | Click `+ new session` (`n` with the sidebar focused, or `prefix+N` from anywhere). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `^S` to create with a plain shell instead of Claude Code, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
+| Create a new session | Click `+ new session` (`n` with the sidebar focused, or `prefix+N` from anywhere; outside tmux just run `pier new`). Type to filter directories (`~/dev/*` + past Claude Code paths), `Enter` to create, `^S` to create with a plain shell instead of Claude Code, `^T` to attach the telegram channel, `Tab` to edit the proposed name. Typing a path that doesn't exist offers `mkdir & create`; picking an already-open path jumps to it instead |
+| Resume a dead session | In the picker, directories with a crashed / shutdown-lost conversation show `↻ resume`: `→` then `Enter` continues it; plain `Enter` starts blank and keeps the offer. `↻ restore all` (top row, one `↑` away) brings every casualty back as its own session |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Key cheatsheet | Click `? help` at the bottom of the sidebar, or `?` with it focused — any key closes the popup |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
@@ -140,11 +142,11 @@ tmux delivers keystrokes to the focused pane, so `j`/`k` only work while the sid
 - **tmux is the source of truth.** Every 2 seconds the sidebar polls `list-panes -a` and detects Claude Code panes (process name `claude`, or a version string like `2.1.206`). State files are decoration only — even if the hooks die, the list stays correct.
 - **Status is recorded by Claude Code hooks.** `pier hook <event>` runs as a child of Claude Code, so it inherits `$TMUX_PANE` and maps to the exact pane. The TUI picks changes up instantly via fsnotify.
 - **Item labels show the current prompt.** Each instance row shows the prompt you last submitted in that pane (captured from the `UserPromptSubmit` hook payload). `/clear` starts a new session (`SessionStart` hook), which blanks the label until the next prompt. When no prompt has been recorded yet (fresh install, resume), the label falls back to the session's `ai-title` record in `~/.claude/projects/*/<session-id>.jsonl`, then to the tmux session name.
-- **Auto-resume.** Every `UserPromptSubmit` also writes a liveness marker (`~/.claude/live-sessions/<session-id>.json` with the session's cwd and pid); `SessionEnd` retires it into an end log. When the picker starts a Claude Code session, pier looks for a casualty in that directory and appends `--resume <id>`:
+- **Crash & shutdown recovery.** Every `UserPromptSubmit` also writes a liveness marker (`~/.claude/live-sessions/<session-id>.json` with the session's cwd, pid, and tmux session name); `SessionEnd` retires it into an end log. The picker flags a directory as holding a casualty when either:
   - *Crash* (SIGKILL, kernel panic, power loss): hooks never ran, so the marker is still there with a dead pid.
   - *Clean OS shutdown*: hooks did run and the marker is gone — instead, a session whose end log entry falls within ±90 s of the sidebar's frozen heartbeat (a file the sidebar touches once a minute) from before the current boot counts as a shutdown casualty. Ends the user asked for (`/clear`, logout, exit at the prompt) are excluded.
 
-  `pier resume-pick <dir>` exposes the same decision to shell scripts and wrappers: it prints the session id to resume and consumes the record (prints nothing when there is none). Caveats: shutdown detection requires a sidebar to have been running at shutdown time (it owns the heartbeat), and a session you closed by hand in the last ~90 s before a shutdown can be picked up as a false positive — resuming it is harmless but unasked-for.
+  Resuming is always an explicit choice — the `↻ resume` button or `↻ restore all`, never automatic. Only an actual resume consumes the record; starting blank leaves it for later. Records expire after 7 days, or as soon as their conversation transcript is gone. Caveats: shutdown detection requires a sidebar to have been running at shutdown time (it owns the heartbeat), and a session you closed by hand in the last ~90 s before a shutdown can show up as a false positive — an offer that's harmless to ignore.
 
 ## Memory usage (measured)
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Pane is one tmux pane as reported by list-panes.
@@ -152,17 +153,25 @@ func SessionNames() map[string]bool {
 	return names
 }
 
+// NewSessionDetached creates a detached session at path running command
+// (empty: tmux's default shell) without touching any client. Starts the
+// server if none is running.
+func NewSessionDetached(name, path, command string) error {
+	args := []string{"new-session", "-d", "-s", name, "-c", path}
+	if command != "" {
+		args = append(args, command)
+	}
+	_, err := run(args...)
+	return err
+}
+
 // NewSessionAndSwitch creates a detached session at path running command
 // (empty: tmux's default shell) and switches the current client to it.
 // Inside a popup the current client is the one hosting the popup — exactly
 // who asked. A failed switch (headless contexts have no client) is not an
 // error: the session exists either way.
 func NewSessionAndSwitch(name, path, command string) error {
-	args := []string{"new-session", "-d", "-s", name, "-c", path}
-	if command != "" {
-		args = append(args, command)
-	}
-	if _, err := run(args...); err != nil {
+	if err := NewSessionDetached(name, path, command); err != nil {
 		return err
 	}
 	_, _ = run("switch-client", "-t", name)
@@ -173,6 +182,16 @@ func NewSessionAndSwitch(name, path, command string) error {
 func SwitchTo(session string) error {
 	_, err := run("switch-client", "-t", session)
 	return err
+}
+
+// AttachExec replaces the current process with `tmux attach-session` — for
+// standalone (outside-tmux) contexts where there is no client to switch.
+func AttachExec(session string) error {
+	path, err := exec.LookPath("tmux")
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(path, []string{"tmux", "attach-session", "-t", "=" + session}, os.Environ())
 }
 
 // KillSession kills a session by exact name ("=" disables prefix matching —
