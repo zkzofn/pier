@@ -142,6 +142,20 @@ func Check(cachePath, url, current string, now time.Time, fetch func(string) (st
 	return c.Latest, now.Sub(c.NotifiedAt) >= CheckInterval
 }
 
+// Refresh fetches the tap version now, ignoring the interval, and records
+// it — for `pier upgrade`, where the user asked explicitly and should not be
+// served a day-old answer. A failed fetch still stamps checked_at.
+func Refresh(cachePath, url string, now time.Time, fetch func(string) (string, error)) (string, error) {
+	v, err := fetch(url)
+	c := LoadCache(cachePath)
+	c.CheckedAt = now
+	if err == nil {
+		c.Latest = v
+	}
+	_ = SaveCache(cachePath, c)
+	return v, err
+}
+
 // MarkNotified records that the user saw the notice (prompt or one-liner).
 func MarkNotified(cachePath string, now time.Time) {
 	c := LoadCache(cachePath)

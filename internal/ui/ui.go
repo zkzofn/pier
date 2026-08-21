@@ -19,7 +19,17 @@ import (
 	"pier/internal/resume"
 	"pier/internal/state"
 	"pier/internal/tmux"
+	"pier/internal/update"
 )
+
+// Version is pier's own version, set by main — the sidebar compares it
+// against the Homebrew tap to show the update row.
+var Version string
+
+// updateCheckEvery bounds how often a sidebar looks at the update cache;
+// the network fetch behind it is capped separately (once a day, shared
+// between every sidebar through the cache file).
+const updateCheckEvery = time.Hour
 
 const pollInterval = 2 * time.Second
 
@@ -32,8 +42,9 @@ var (
 	styleCurrent = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("15")).
 			Background(lipgloss.Color("30"))
-	styleDim = lipgloss.NewStyle().Faint(true)
-	styleErr = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleDim    = lipgloss.NewStyle().Faint(true)
+	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleUpdate = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 
 	iconStyles = map[string]lipgloss.Style{
 		state.Working:    lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
@@ -72,9 +83,10 @@ const (
 	rowBlank rowKind = iota
 	rowHeader
 	rowItem
-	rowNew  // the "+ new session" action line
-	rowHelp // the "? help" action line
-	rowInfo // plain informational text
+	rowNew    // the "+ new session" action line
+	rowHelp   // the "? help" action line
+	rowInfo   // plain informational text
+	rowUpdate // "a newer pier is out" notice
 )
 
 type row struct {
@@ -88,6 +100,7 @@ type row struct {
 type (
 	tickMsg    time.Time
 	watchMsg   struct{}
+	updateMsg  struct{ latest string }
 	refreshMsg struct {
 		groups []discover.Worktree
 		states map[string]state.PaneState
@@ -110,6 +123,10 @@ type Model struct {
 	height  int
 	err     error
 	watcher *fsnotify.Watcher
+	// latest is the newer version the Homebrew tap carries, "" when we are
+	// current (or never checked).
+	latest    string
+	lastCheck time.Time
 }
 
 // Run starts the sidebar TUI. Must run inside a tmux pane.
@@ -140,7 +157,27 @@ func Run() error {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(refresh, tick(), m.waitWatch())
+	return tea.Batch(refresh, tick(), m.waitWatch(), checkUpdate)
+}
+
+// checkUpdate reports a newer pier from the Homebrew tap, reusing the
+// launcher's once-a-day cache — so a sidebar costs a file read, not a
+// request. PIER_NO_UPDATE_CHECK silences it like everywhere else.
+func checkUpdate() tea.Msg {
+	if Version == "" || os.Getenv("PIER_NO_UPDATE_CHECK") != "" {
+		return updateMsg{}
+	}
+	url := update.FormulaURL
+	if u := os.Getenv("PIER_UPDATE_URL"); u != "" {
+		url = u
+	}
+	latest, _ := update.Check(update.CachePath(), url, Version, time.Now(), func(u string) (string, error) {
+		return update.Fetch(u, 2*time.Second)
+	})
+	if !update.Newer(latest, Version) {
+		return updateMsg{}
+	}
+	return updateMsg{latest: latest}
 }
 
 func refresh() tea.Msg {
@@ -197,10 +234,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the file's frozen mtime tells resume-pick when the system was last
 		// alive (throttled inside to one touch a minute).
 		resume.HeartbeatTick(resume.Dir())
-		return m, tea.Batch(refresh, tick())
+		cmds := []tea.Cmd{refresh, tick()}
+		if time.Since(m.lastCheck) >= updateCheckEvery {
+			m.lastCheck = time.Now()
+			cmds = append(cmds, checkUpdate)
+		}
+		return m, tea.Batch(cmds...)
 
 	case watchMsg:
 		return m, tea.Batch(refresh, m.waitWatch())
+
+	case updateMsg:
+		if msg.latest != m.latest {
+			m.latest = msg.latest
+			m.buildRows()
+		}
+		return m, nil
 
 	case refreshMsg:
 		if msg.err != nil {
@@ -327,6 +376,9 @@ func (m *Model) buildRows() {
 	}
 	m.rows = append(m.rows, row{kind: rowNew, item: -1})
 	m.rows = append(m.rows, row{kind: rowHelp, item: -1})
+	if m.latest != "" {
+		m.rows = append(m.rows, row{kind: rowUpdate, text: m.latest, item: -1})
+	}
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1 // may become -1 (hidden) when empty
 	}
@@ -407,6 +459,10 @@ func (m Model) View() string {
 			writeLine("  " + styleBranch.Render("?") + styleDim.Render(" help"))
 		case rowInfo:
 			writeLine(styleDim.Render(r.text))
+		case rowUpdate:
+			// Instructional, not clickable: `pier upgrade` is the command,
+			// and a row that looks pressable but isn't reads as broken.
+			writeLine("  " + styleUpdate.Render("↑ "+r.text) + styleDim.Render(" · pier upgrade"))
 		case rowHeader:
 			name := filepath.Base(r.wt.Path)
 			writeLine(" " + stylePath.Render(name) + " " + styleBranch.Render("⎇ "+r.wt.Branch))

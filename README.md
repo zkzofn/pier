@@ -28,6 +28,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 - **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — the picker lists your running sessions first (`Enter` jumps back into one), then directories: pick one and a Claude Code session starts there, named after the directory. `^S` instead of `Enter` starts a terminal session (a plain shell, no Claude Code) — for when you want a terminal without splitting a pane or opening a new window. Outside tmux, plain `pier` opens the same picker in your terminal
 - **Resume**: a Claude Code session lost to a crash, power loss, or OS shutdown isn't gone — its directory grows a `↻ resume` button in the picker. `→` then `Enter` continues that conversation under its old session name; plain `Enter` starts blank and keeps the offer around. With any casualties present, an `↻ restore all` row rebuilds the whole pre-shutdown layout in one stroke
 - **Telegram**: `^T` in the picker (a `tg✓` badge shows it's on) starts the session with Claude Code's telegram channel attached
+- **Update notice**: while the Homebrew tap carries a newer pier, every sidebar shows an `↑ <version> · pier upgrade` line at the bottom
 - **Help**: click `? help` at the bottom of the sidebar (or press `?`) — a popup with every key above, so none of this needs memorizing
 
 ## Requirements
@@ -72,6 +73,25 @@ After an upgrade, the first `pier` run refreshes pier's block in
 `~/.tmux.conf` and reloads tmux (`tmux.conf: pier block updated`). The block
 keeps whichever binary path it already points at, so a second copy of pier
 never repoints your live config.
+
+## Updating
+
+```sh
+brew update && brew upgrade zkzofn/tap/pier
+```
+
+or, from inside pier, `pier upgrade` — it asks the tap right now (no waiting
+for the daily check) and runs the Homebrew upgrade for you. Source installs:
+`git pull && make setup` in your checkout.
+
+You normally don't have to remember any of this. A `pier` start checks the tap
+once a day and says so, and every sidebar carries an `↑ <version> · pier
+upgrade` line while a newer one is out. `PIER_NO_UPDATE_CHECK=1` silences both.
+
+Upgrading never leaves you on a stale config: the next time pier's tmux hook
+runs — which is every attach or session switch — it brings its `~/.tmux.conf`
+block up to date and reloads tmux, keeping whichever binary path the block
+already points at.
 
 <details>
 <summary>Manual setup — exactly what <code>pier setup</code> does</summary>
@@ -149,6 +169,7 @@ Once a day, on a `pier` start, pier checks the Homebrew tap for a newer version 
 | Resume a dead session | In the picker, directories with a crashed / shutdown-lost conversation show `↻ resume`: `→` then `Enter` continues it; plain `Enter` starts blank and keeps the offer. `↻ restore all` (top row, one `↑` away) brings every casualty back as its own session |
 | Jump with the keyboard | Focus the sidebar pane (`prefix+←`), then `j`/`k` + `Enter` |
 | Change or add the shell alias | `pier alias <name>`; `pier alias` alone shows the current one |
+| Update pier | `pier upgrade` (or `brew upgrade zkzofn/tap/pier`) |
 | Key cheatsheet | Click `? help` at the bottom of the sidebar, or `?` with it focused — any key closes the popup |
 | Show/hide the sidebar | `prefix + g`, or `pier toggle` |
 | Finish the current session | `prefix + x` (or `pier done`) — kills the session and jumps to the next one in sidebar order; with no other session it just exits. No confirmation — the kill is immediate. Overrides tmux's default kill-pane binding. Plain `exit` in a session's last pane does the same: the session closes at once and your client moves to the most recently used one |

@@ -28,6 +28,7 @@
 - **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — picker는 실행 중인 세션을 맨 위에 먼저 보여주고(`Enter`로 그 세션에 점프), 그 아래 디렉토리 목록에서 고르면 그 이름의 Claude Code 세션이 그 경로에서 시작된다. `Enter` 대신 `^S`를 누르면 터미널 세션(Claude Code 없는 일반 셸) — pane 분할이나 새 윈도우 없이 터미널이 필요할 때. tmux 밖 일반 터미널에서는 그냥 `pier`로 같은 picker가 뜬다
 - **복구(resume)**: 크래시·전원 차단·OS 재부팅으로 날아간 Claude Code 세션은 사라지지 않는다 — picker에서 그 디렉토리에 `↻ resume` 버튼이 붙는다. `→` 후 `Enter`면 그 대화를 기존 세션명으로 이어가고, 그냥 `Enter`면 빈 세션으로 시작하며 복구 기회는 남는다. 사상자가 있으면 맨 위 `↻ restore all` 행이 셧다운 전 세션 구성 전체를 한 번에 되살린다
 - **텔레그램**: picker에서 `^T`(켜지면 `tg✓` 배지) — Claude Code의 텔레그램 채널을 붙인 채로 세션을 시작한다
+- **업데이트 알림**: Homebrew tap에 새 버전이 있으면 모든 사이드바 하단에 `↑ <버전> · pier upgrade` 줄이 뜬다
 - **도움말**: 사이드바 하단 `? help` 클릭(또는 `?`) — 위의 모든 키를 popup으로 보여주니 외울 필요 없다
 
 ## 요구사항
@@ -71,6 +72,24 @@ pier
 갱신하고 tmux를 리로드한다(`tmux.conf: pier block updated`). 이때 블록이 가리키던
 바이너리 경로는 그대로 유지되므로, 다른 위치의 pier를 한 번 실행했다고 해서
 사용 중인 설정이 그쪽으로 바뀌지 않는다.
+
+## 업데이트
+
+```sh
+brew update && brew upgrade zkzofn/tap/pier
+```
+
+또는 pier 안에서 `pier upgrade` — 하루 한 번 확인을 기다리지 않고 지금 바로 tap에
+물어본 뒤 Homebrew 업그레이드까지 돌려준다. 소스 설치는 체크아웃에서
+`git pull && make setup`.
+
+사실 외울 필요는 없다. `pier`로 시작할 때 하루 한 번 tap을 확인해 알려주고, 새
+버전이 있는 동안에는 모든 사이드바 하단에 `↑ <버전> · pier upgrade` 줄이 뜬다.
+둘 다 `PIER_NO_UPDATE_CHECK=1`로 끌 수 있다.
+
+업그레이드 후 설정이 뒤처지는 일도 없다 — pier의 tmux 훅이 도는 순간(= attach나
+세션 전환 때마다) `~/.tmux.conf`의 pier 블록을 최신 내용으로 갱신하고 tmux를
+리로드한다. 이때 블록에 적힌 바이너리 경로는 그대로 유지한다.
 
 <details>
 <summary>수동 설정 — <code>pier setup</code>이 하는 일</summary>
@@ -148,6 +167,7 @@ hooks 없이도 사이드바·점프·status bar는 전부 동작한다. 상태 
 | 죽은 세션 복구 | picker에서 크래시·셧다운으로 끊긴 대화가 있는 디렉토리엔 `↻ resume`이 표시된다: `→` 후 `Enter`면 이어서, 그냥 `Enter`면 빈 세션(복구 기회는 보존). 맨 위 `↻ restore all` 행(`↑` 한 번)은 사상자 전부를 각자의 세션으로 되살린다 |
 | 키보드로 점프 | 사이드바 pane으로 포커스 이동(`prefix+←`) 후 `j`/`k` + `Enter` |
 | alias 변경·추가 | `pier alias <이름>`, 인자 없이 `pier alias`면 현재 설정을 보여준다 |
+| pier 업데이트 | `pier upgrade` (또는 `brew upgrade zkzofn/tap/pier`) |
 | 단축키 치트시트 | 사이드바 하단 `? help` 클릭, 또는 사이드바 포커스에서 `?` — 아무 키나 누르면 닫힘 |
 | 사이드바 열기/닫기 | `prefix + g`, 또는 `pier toggle` |
 | 현재 세션 끝내기 | `prefix + x` (또는 `pier done`) — 세션을 종료하고 사이드바 순서상 다음 세션으로 점프. 다른 세션이 없으면 그냥 종료. 확인 절차 없이 즉시 kill. tmux 기본 kill-pane 바인딩을 덮어씀. 세션의 마지막 pane에서 그냥 `exit`해도 같다 — 세션이 즉시 닫히고 클라이언트는 가장 최근 세션으로 옮겨간다 |

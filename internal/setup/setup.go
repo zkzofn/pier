@@ -135,7 +135,7 @@ func UpsertBlock(path, block string) (BlockStatus, error) {
 			return BlockUnchanged, nil
 		}
 		content = content[:i] + body + content[j:]
-		return BlockUpdated, os.WriteFile(path, []byte(content), 0o644)
+		return BlockUpdated, writeAtomic(path, []byte(content))
 	}
 	if content != "" {
 		content = strings.TrimRight(content, "\n") + "\n\n"
@@ -144,7 +144,31 @@ func UpsertBlock(path, block string) (BlockStatus, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return BlockUnchanged, err
 	}
-	return BlockAdded, os.WriteFile(path, []byte(content), 0o644)
+	return BlockAdded, writeAtomic(path, []byte(content))
+}
+
+// writeAtomic replaces a file through a temp file in the same directory, so
+// a reader never sees a half-written config. `pier ensure` refreshes the
+// tmux block from a hook that several attaching clients can fire at once.
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".pier-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // TmuxConf writes the pier block into the tmux config: appended when absent,
