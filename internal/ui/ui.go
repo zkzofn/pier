@@ -47,6 +47,25 @@ var (
 	}
 )
 
+// paneIcon returns a pane's status glyph and its styled rendering: "$" for a
+// terminal pane (no Claude Code — any recorded state is stale), else the
+// recorded state's glyph, "·" when unknown. Shared by the sidebar rows and
+// the picker's open-session rows so both show the same thing.
+func paneIcon(p tmux.Pane, states map[string]state.PaneState) (glyph, styled string) {
+	if !discover.IsClaudeCommand(p.Command) {
+		return "$", styleDim.Render("$")
+	}
+	st := states[p.ID].State
+	glyph = "·"
+	if ic, ok := icons[st]; ok {
+		glyph = ic
+	}
+	if s, ok := iconStyles[st]; ok {
+		return glyph, s.Render(glyph)
+	}
+	return glyph, styleDim.Render(glyph)
+}
+
 type rowKind int
 
 const (
@@ -398,19 +417,7 @@ func (m Model) View() string {
 					dup = true
 				}
 			}
-			st := m.states[r.pane.ID].State
-			icon := "·"
-			if !discover.IsClaudeCommand(r.pane.Command) {
-				// plain shell session: CC states don't apply (any recorded
-				// state is stale from an earlier claude run in this pane)
-				st, icon = "", "$"
-			} else if ic, ok := icons[st]; ok {
-				icon = ic
-			}
-			iconR := styleDim.Render(icon)
-			if s, ok := iconStyles[st]; ok {
-				iconR = s.Render(icon)
-			}
+			icon, iconR := paneIcon(r.pane, m.states)
 			label := m.itemLabel(r.pane, dup)
 			line := "  " + iconR + " " + label
 			if r.pane.Session == m.session {

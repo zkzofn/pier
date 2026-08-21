@@ -1,7 +1,9 @@
 // The new-session picker: runs inside a tmux popup (`pier new`) or
-// standalone in a plain terminal (`cl` outside tmux — attaches on exit).
-// Pick a directory → the session name follows it; Tab edits the name.
-// Enter starts Claude Code there, ctrl+s a plain shell.
+// standalone in a plain terminal (bare `pier` outside tmux — the caller
+// attaches to whatever was picked). Running sessions are listed first
+// (Enter jumps back into one), then directories: pick one → the session name
+// follows it; Tab edits the name. Enter starts Claude Code there, ctrl+s a
+// terminal (plain shell).
 //
 // Directories where a session died (crash, power loss, OS shutdown) carry a
 // ↻ resume button: →/Enter resumes that conversation, plain Enter starts
@@ -22,16 +24,17 @@ import (
 	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/truncate"
 
+	"pier/internal/claude"
 	"pier/internal/discover"
 	"pier/internal/newsess"
 	"pier/internal/resume"
+	"pier/internal/state"
 	"pier/internal/tmux"
 )
 
 var (
 	stylePrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	stylePick   = lipgloss.NewStyle().Bold(true)
-	styleOpen   = lipgloss.NewStyle().Faint(true)
 	styleHint   = lipgloss.NewStyle().Faint(true)
 	styleNewErr = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleResume = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
@@ -52,43 +55,67 @@ const (
 	btnResumeFocus = "[↻ resume]"
 )
 
-// what the new session's main pane runs
+// what a terminal session's main pane runs
 const cmdShell = "" // empty: tmux's default shell
+
+type pickerRowKind int
+
+const (
+	prRestoreAll pickerRowKind = iota // "↻ restore all" action row
+	prOpen                            // a running session — Enter jumps there
+	prSep                             // blank divider between the groups; the cursor skips it
+	prDir                             // a directory candidate (incl. the manual one)
+)
+
+type pickerRow struct {
+	kind pickerRowKind
+	open *newsess.Open      // prOpen
+	cand *newsess.Candidate // prDir
+}
 
 type pickerModel struct {
 	home       string
 	insideTmux bool
-	all        []newsess.Candidate
+	all        []newsess.Candidate        // directory candidates (open paths excluded)
+	opens      []newsess.Open             // running sessions, sidebar order
+	states     map[string]state.PaneState // icons for the open rows
 	filtered   []newsess.Candidate
 	manual     *newsess.Candidate
+	rows       []pickerRow
 	taken      map[string]bool
 	casualties map[string]resume.Casualty // by cleaned cwd
 	query      string
-	cursor     int
+	cursor     int // index into rows
 	scroll     int
 	onResume   bool // focus sits on the cursor row's ↻ resume button
 	telegram   bool // ^T: start claude with the telegram channel attached
 	editing    bool
 	name       string
-	attach     string // standalone: session to exec-attach after the TUI exits
+	attach     string // standalone: session to attach to after the TUI exits
 	width      int
 	height     int
 	errMsg     string
 }
 
-// RunNew starts the picker TUI — in a tmux display-popup or standalone.
-func RunNew() error {
+// RunNew runs the picker TUI — in a tmux display-popup or standalone — and
+// returns the session to attach to. That is "" when nothing was picked, and
+// always "" inside tmux, where the picker switches the client itself.
+func RunNew() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 	insideTmux := os.Getenv("TMUX") != ""
 	panes, err := tmux.ListPanes()
 	if err != nil {
 		if insideTmux {
-			return err
+			return "", err
 		}
 		panes = nil // no tmux server yet — nothing is open, that's fine
+	}
+	exclude := ""
+	if insideTmux {
+		exclude = tmux.CurrentSession() // jumping to where we already are is a no-op
 	}
 	casualties := map[string]resume.Casualty{}
 	for _, c := range resume.List(resume.Dir()) {
@@ -98,6 +125,8 @@ func RunNew() error {
 		home:       home,
 		insideTmux: insideTmux,
 		all:        newsess.Collect(home, panes),
+		opens:      newsess.OpenSessions(panes, exclude),
+		states:     state.ReadAll(state.Dir()),
 		taken:      tmux.SessionNames(),
 		casualties: casualties,
 		width:      46,
@@ -107,80 +136,70 @@ func RunNew() error {
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if fm, ok := final.(pickerModel); ok && fm.attach != "" {
-		return tmux.AttachExec(fm.attach)
+	if fm, ok := final.(pickerModel); ok {
+		return fm.attach, nil
 	}
-	return nil
+	return "", nil
 }
 
 func (m pickerModel) Init() tea.Cmd { return nil }
 
+// refilter applies the query to both groups and rebuilds the rows:
+// [restore all] → open sessions → divider → directories. The cursor lands on
+// the first open session (Enter = back into it), else the first directory —
+// never the restore-all row: a reflexive Enter at boot must not resume every
+// casualty at once (it stays one ↑ away).
 func (m *pickerModel) refilter() {
 	m.filtered = newsess.Filter(m.all, m.query)
+	opens := newsess.FilterOpen(m.opens, m.query)
 	m.manual = nil
-	if len(m.filtered) == 0 {
+	if len(m.filtered) == 0 && len(opens) == 0 {
 		m.manual = newsess.Manual(m.home, m.query)
 	}
-	// Land on the first directory, never the restore-all row: a reflexive
-	// Enter at boot must not resume every casualty at once (it stays one ↑
-	// away).
+	m.rows = m.rows[:0]
+	if m.query == "" && len(m.casualties) > 0 {
+		m.rows = append(m.rows, pickerRow{kind: prRestoreAll})
+	}
+	for i := range opens {
+		m.rows = append(m.rows, pickerRow{kind: prOpen, open: &opens[i]})
+	}
+	dirs := m.filtered
+	if m.manual != nil {
+		dirs = []newsess.Candidate{*m.manual}
+	}
+	if len(opens) > 0 && len(dirs) > 0 {
+		m.rows = append(m.rows, pickerRow{kind: prSep})
+	}
+	for i := range dirs {
+		m.rows = append(m.rows, pickerRow{kind: prDir, cand: &dirs[i]})
+	}
 	m.cursor = 0
-	if m.restoreRow() && m.itemCount() > 1 {
-		m.cursor = 1
+	for i, r := range m.rows {
+		if r.kind == prOpen || r.kind == prDir {
+			m.cursor = i
+			break
+		}
 	}
 	m.scroll = 0
 	m.onResume = false
 	m.errMsg = ""
 }
 
-// restoreRow reports whether the "restore all" row is shown (list top).
-func (m pickerModel) restoreRow() bool {
-	return m.query == "" && m.manual == nil && len(m.casualties) > 0
-}
-
-// isRestoreAll reports whether list index i is the restore-all row.
-func (m pickerModel) isRestoreAll(i int) bool {
-	return m.restoreRow() && i == 0
-}
-
-func (m pickerModel) itemCount() int {
-	n := len(m.filtered)
-	if m.manual != nil {
-		n = 1
-	}
-	if m.restoreRow() {
-		n++
-	}
-	return n
-}
-
-func (m pickerModel) itemAt(i int) *newsess.Candidate {
-	if m.restoreRow() {
-		if i == 0 {
-			return nil // the restore-all row is not a directory
-		}
-		i--
-	}
-	if m.manual != nil {
-		if i == 0 {
-			return m.manual
-		}
+func (m pickerModel) rowAt(i int) *pickerRow {
+	if i < 0 || i >= len(m.rows) {
 		return nil
 	}
-	if i < 0 || i >= len(m.filtered) {
-		return nil
-	}
-	return &m.filtered[i]
+	return &m.rows[i]
 }
 
-// casualtyFor returns the dead session waiting in cand's directory, if any.
-func (m pickerModel) casualtyFor(cand *newsess.Candidate) (resume.Casualty, bool) {
-	if cand == nil || cand.Manual || cand.Open != "" {
+// casualtyFor returns the dead session waiting in a directory row's path.
+func (m pickerModel) casualtyFor(r *pickerRow) (resume.Casualty, bool) {
+	if r == nil || r.kind != prDir || r.cand.Manual {
 		return resume.Casualty{}, false
 	}
-	c, ok := m.casualties[filepath.Clean(cand.Path)]
+	c, ok := m.casualties[filepath.Clean(r.cand.Path)]
 	return c, ok
 }
 
@@ -204,16 +223,23 @@ func (m *pickerModel) clampScroll() {
 	}
 }
 
-// claudeCmd is what a new Claude Code pane runs, ^T state included.
-func (m pickerModel) claudeCmd() string {
-	if m.telegram {
-		return "claude --channels plugin:telegram@claude-plugins-official"
+// move steps the cursor by delta, hopping over divider rows; past either end
+// it stays put.
+func (m *pickerModel) move(delta int) {
+	i := m.cursor + delta
+	for i >= 0 && i < len(m.rows) && m.rows[i].kind == prSep {
+		i += delta
 	}
-	return "claude"
+	if i < 0 || i >= len(m.rows) {
+		return
+	}
+	m.cursor = i
+	m.onResume = false
+	m.clampScroll()
 }
 
-// launch creates the session — switching to it inside tmux, deferring an
-// exec-attach when standalone.
+// launch creates the session — switching to it inside tmux, handing the
+// name back for an attach when standalone.
 func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
 	if m.insideTmux {
 		if err := tmux.NewSessionAndSwitch(name, path, command); err != nil {
@@ -230,34 +256,42 @@ func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+// jump leaves the picker for a running session: switch the client inside
+// tmux, else hand the name back for the caller to attach.
+func (m pickerModel) jump(session string) (tea.Model, tea.Cmd) {
+	if m.insideTmux {
+		_ = tmux.SwitchTo(session)
+		return m, tea.Quit
+	}
+	m.attach = session
+	return m, tea.Quit
+}
+
 func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
-	if m.isRestoreAll(i) {
+	r := m.rowAt(i)
+	if r == nil {
+		return m, nil
+	}
+	switch r.kind {
+	case prRestoreAll:
 		if shell {
 			return m, nil
 		}
 		return m.restoreAll()
-	}
-	cand := m.itemAt(i)
-	if cand == nil {
+	case prOpen:
+		return m.jump(r.open.Session)
+	case prSep:
 		return m, nil
 	}
-	if cand.Open != "" {
-		if m.insideTmux {
-			_ = tmux.SwitchTo(cand.Open)
-			return m, tea.Quit
-		}
-		m.attach = cand.Open
-		return m, tea.Quit
-	}
-
-	command := m.claudeCmd()
+	cand := r.cand
+	command := claude.Cmd(m.telegram)
 	name := cand.Name
 	resumeSID := ""
 	if !shell && m.onResume {
 		// The ↻ button: continue the dead conversation, under its old
 		// session name when we know it.
-		if c, ok := m.casualtyFor(cand); ok {
-			command += " --resume " + c.SID
+		if c, ok := m.casualtyFor(r); ok {
+			command = claude.ResumeCmd(m.telegram, c.SID)
 			resumeSID = c.SID
 			if c.Session != "" {
 				name = c.Session
@@ -306,7 +340,7 @@ func (m pickerModel) restoreAll() (tea.Model, tea.Cmd) {
 			base = filepath.Base(c.CWD)
 		}
 		name := newsess.Unique(newsess.Sanitize(base), m.taken)
-		if err := tmux.NewSessionDetached(name, c.CWD, m.claudeCmd()+" --resume "+c.SID); err != nil {
+		if err := tmux.NewSessionDetached(name, c.CWD, claude.ResumeCmd(m.telegram, c.SID)); err != nil {
 			failed = append(failed, filepath.Base(c.CWD))
 			continue
 		}
@@ -320,12 +354,7 @@ func (m pickerModel) restoreAll() (tea.Model, tea.Cmd) {
 		m.errMsg = "restore failed: " + strings.Join(failed, ", ")
 		return m, nil
 	}
-	if m.insideTmux {
-		_ = tmux.SwitchTo(newest)
-	} else {
-		m.attach = newest
-	}
-	return m, tea.Quit
+	return m.jump(newest)
 }
 
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -340,32 +369,22 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
-			if m.cursor > 0 {
-				m.cursor--
-				m.onResume = false
-				m.clampScroll()
-			}
+			m.move(-1)
 		case tea.MouseButtonWheelDown:
-			if m.cursor < m.itemCount()-1 {
-				m.cursor++
-				m.onResume = false
-				m.clampScroll()
-			}
+			m.move(1)
 		case tea.MouseButtonLeft:
 			if m.editing {
 				return m, nil
 			}
 			i := msg.Y - listTop + m.scroll
-			if m.isRestoreAll(i) {
-				m.cursor = i
-				return m.restoreAll()
+			r := m.rowAt(i)
+			if r == nil || r.kind == prSep {
+				return m, nil
 			}
-			if cand := m.itemAt(i); cand != nil {
-				m.cursor = i
-				_, has := m.casualtyFor(cand)
-				m.onResume = has && msg.X >= m.width-1-ansi.PrintableRuneWidth(btnResume)
-				return m.confirm(i, false)
-			}
+			m.cursor = i
+			_, has := m.casualtyFor(r)
+			m.onResume = has && msg.X >= m.width-1-ansi.PrintableRuneWidth(btnResume)
+			return m.confirm(i, false)
 		}
 		return m, nil
 
@@ -401,29 +420,21 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+t":
 			m.telegram = !m.telegram
 		case "right":
-			if _, ok := m.casualtyFor(m.itemAt(m.cursor)); ok {
+			if _, ok := m.casualtyFor(m.rowAt(m.cursor)); ok {
 				m.onResume = true
 			}
 		case "left":
 			m.onResume = false
 		case "tab":
-			if cand := m.itemAt(m.cursor); cand != nil && cand.Open == "" {
+			if r := m.rowAt(m.cursor); r != nil && r.kind == prDir {
 				m.editing = true
 				m.onResume = false
-				m.name = newsess.Unique(cand.Name, m.taken)
+				m.name = newsess.Unique(r.cand.Name, m.taken)
 			}
 		case "up", "ctrl+p":
-			if m.cursor > 0 {
-				m.cursor--
-				m.onResume = false
-				m.clampScroll()
-			}
+			m.move(-1)
 		case "down", "ctrl+n":
-			if m.cursor < m.itemCount()-1 {
-				m.cursor++
-				m.onResume = false
-				m.clampScroll()
-			}
+			m.move(1)
 		case "backspace":
 			if len(m.query) > 0 {
 				r := []rune(m.query)
@@ -441,6 +452,51 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// dirLine renders a directory row, reserving the ↻ resume button's columns
+// when the directory holds a casualty so it never gets truncated away.
+func (m pickerModel) dirLine(r *pickerRow, cur bool, w uint) string {
+	cand := r.cand
+	prefix, label := "  ", ""
+	switch {
+	case cand.Manual && cand.NeedsMkdir:
+		label = "+ mkdir & create at " + discover.ShortPath(cand.Path)
+	case cand.Manual:
+		label = "+ create at " + discover.ShortPath(cand.Path)
+	default:
+		label = cand.Name + "  " + styleHint.Render(discover.ShortPath(cand.Path))
+	}
+	onBtn := cur && m.onResume
+	if cur {
+		prefix = "▸ "
+		if !onBtn {
+			label = stylePick.Render(label)
+		}
+	}
+	if _, has := m.casualtyFor(r); has {
+		btn := btnResume
+		if onBtn {
+			btn = btnResumeFocus
+		}
+		avail := int(w) - ansi.PrintableRuneWidth(prefix) - ansi.PrintableRuneWidth(btn) - 1
+		if avail < 1 {
+			avail = 1
+		}
+		if ansi.PrintableRuneWidth(label) > avail {
+			label = truncate.StringWithTail(label, uint(avail), "…")
+		}
+		pad := avail - ansi.PrintableRuneWidth(label) + 1
+		if pad < 1 {
+			pad = 1
+		}
+		styled := styleResume.Render(btn)
+		if onBtn {
+			styled = stylePick.Reverse(true).Render(btn)
+		}
+		label += strings.Repeat(" ", pad) + styled
+	}
+	return prefix + label
+}
+
 func (m pickerModel) View() string {
 	w := uint(m.width - 1) // ambiguous-width guard, same as the sidebar
 	var b strings.Builder
@@ -455,10 +511,9 @@ func (m pickerModel) View() string {
 	}
 
 	if m.editing {
-		cand := m.itemAt(m.cursor)
 		path := ""
-		if cand != nil {
-			path = discover.ShortPath(cand.Path)
+		if r := m.rowAt(m.cursor); r != nil && r.kind == prDir {
+			path = discover.ShortPath(r.cand.Path)
 		}
 		line(" " + styleHint.Render("path: "+path))
 		line(" " + stylePrompt.Render("name: ") + m.name + "█")
@@ -466,7 +521,7 @@ func (m pickerModel) View() string {
 		if m.errMsg != "" {
 			line(" " + styleNewErr.Render(m.errMsg))
 		}
-		line(" " + styleHint.Render("Enter: create · ^S: shell · Esc: back"))
+		line(" " + styleHint.Render("Enter: create · ^S: terminal · Esc: back"))
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
@@ -481,63 +536,34 @@ func (m pickerModel) View() string {
 	line(head)
 	line("")
 	shown := 0
-	for i := m.scroll; i < m.itemCount() && shown < m.visibleRows(); i++ {
-		if m.isRestoreAll(i) {
+	for i := m.scroll; i < len(m.rows) && shown < m.visibleRows(); i++ {
+		r := &m.rows[i]
+		cur := i == m.cursor
+		switch r.kind {
+		case prRestoreAll:
 			label := fmt.Sprintf("↻ restore all (%d)", len(m.casualties))
-			if i == m.cursor {
+			if cur {
 				line("▸ " + stylePick.Render(label))
 			} else {
 				line("  " + styleResume.Render(label))
 			}
-			shown++
-			continue
+		case prOpen:
+			// Styles are applied per segment, not nested: the icon's color
+			// reset would otherwise cut the cursor's bold short.
+			_, icon := paneIcon(r.open.Pane, m.states)
+			prefix, name := "  ", r.open.Session
+			if cur {
+				prefix, name = "▸ ", stylePick.Render(name)
+			}
+			line(prefix + icon + " " + name + "  " + styleHint.Render(discover.ShortPath(r.open.Path)))
+		case prSep:
+			line("")
+		case prDir:
+			line(m.dirLine(r, cur, w))
 		}
-		cand := m.itemAt(i)
-		prefix, label := "  ", ""
-		switch {
-		case cand.Manual && cand.NeedsMkdir:
-			label = "+ mkdir & create at " + discover.ShortPath(cand.Path)
-		case cand.Manual:
-			label = "+ create at " + discover.ShortPath(cand.Path)
-		case cand.Open != "":
-			label = cand.Name + styleOpen.Render("  · open: "+cand.Open)
-		default:
-			label = cand.Name + "  " + styleHint.Render(discover.ShortPath(cand.Path))
-		}
-		onBtn := i == m.cursor && m.onResume
-		if i == m.cursor {
-			prefix = "▸ "
-			if !onBtn {
-				label = stylePick.Render(label)
-			}
-		}
-		if _, has := m.casualtyFor(cand); has {
-			// Reserve the button's columns so it never gets truncated away.
-			btn := btnResume
-			if onBtn {
-				btn = btnResumeFocus
-			}
-			avail := int(w) - ansi.PrintableRuneWidth(prefix) - ansi.PrintableRuneWidth(btn) - 1
-			if avail < 1 {
-				avail = 1
-			}
-			if ansi.PrintableRuneWidth(label) > avail {
-				label = truncate.StringWithTail(label, uint(avail), "…")
-			}
-			pad := avail - ansi.PrintableRuneWidth(label) + 1
-			if pad < 1 {
-				pad = 1
-			}
-			styled := styleResume.Render(btn)
-			if onBtn {
-				styled = stylePick.Reverse(true).Render(btn)
-			}
-			label += strings.Repeat(" ", pad) + styled
-		}
-		line(prefix + label)
 		shown++
 	}
-	if m.itemCount() == 0 {
+	if len(m.rows) == 0 {
 		line("  " + styleHint.Render("no match — type a ~/ or absolute path"))
 	}
 	line("")
@@ -546,7 +572,7 @@ func (m pickerModel) View() string {
 	} else if len(m.casualties) > 0 {
 		line(" " + styleHint.Render("Enter: new · → resume · ^S · ^T tg · Esc"))
 	} else {
-		line(" " + styleHint.Render("Enter: create · ^S: shell · Tab: name · Esc"))
+		line(" " + styleHint.Render("Enter: create · ^S: terminal · Tab: name"))
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }

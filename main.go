@@ -7,6 +7,9 @@ import (
 	"os"
 
 	"pier/internal/discover"
+	"pier/internal/launch"
+	"pier/internal/onboard"
+	"pier/internal/prompt"
 	"pier/internal/resume"
 	"pier/internal/setup"
 	"pier/internal/state"
@@ -14,12 +17,18 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "0.11.0"
+const version = "1.0.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
 usage:
+  pier                      start: outside tmux, pick an open session or a
+                              directory and attach; inside tmux, run claude
+                              in this pane. The first run offers setup and
+                              a shell alias; upgrades are announced here
+  pier <claude flags...>    pass straight through to claude (e.g. pier -r)
   pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
+  pier alias [name]         show or set the shell alias for pier
   pier run                  run the sidebar TUI (inside a tmux pane)
   pier new                  new-session picker (sidebar "+" / prefix+N /
                               standalone outside tmux — attaches on create)
@@ -28,6 +37,8 @@ usage:
   pier toggle [-t session]  toggle the sidebar pane
   pier done                 kill the current session and jump to the next
                               one in sidebar order (or just exit if alone)
+  pier reap                 kill sessions left with only a sidebar pane
+                              (tmux pane-exited hook)
   pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
                                       stop | permission-request |
@@ -41,58 +52,84 @@ func usage() {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
-	}
+	args := os.Args[1:]
 	var err error
-	switch os.Args[1] {
-	case "setup":
-		err = setup.Run(self())
-	case "run":
-		err = ui.Run()
-	case "new":
-		err = ui.RunNew()
-	case "keys":
-		err = ui.RunKeys()
-	case "ensure":
-		err = tmux.EnsureSidebar(targetSession(), self())
-	case "toggle":
-		err = tmux.ToggleSidebar(targetSession(), self())
-	case "done":
-		err = doneCmd()
-	case "hook":
-		if len(os.Args) < 3 {
-			usage()
-			os.Exit(2)
-		}
-		var payload []byte
-		payload, _ = io.ReadAll(os.Stdin)
-		// Liveness bookkeeping is best-effort: a failed write must never
-		// surface as a hook error inside Claude Code.
-		switch os.Args[2] {
-		case "user-prompt-submit":
-			_ = resume.RecordPrompt(resume.Dir(), payload)
-		case "session-end":
-			_ = resume.RecordEnd(resume.Dir(), payload)
-		}
-		err = state.Record(state.Dir(), os.Args[2], payload)
-	case "status":
-		if len(os.Args) < 3 {
-			usage()
-			os.Exit(2)
-		}
-		fmt.Print(statusLine(os.Args[2]))
-	case "version", "--version", "-v":
+	switch launch.Classify(args) {
+	case launch.KindLaunch:
+		err = launch.Run(version, self())
+	case launch.KindPassthrough:
+		err = launch.Passthrough(args)
+	case launch.KindHelp:
+		usage()
+		return
+	case launch.KindVersion:
 		fmt.Println(version)
-	default:
+		return
+	case launch.KindUnknown:
 		usage()
 		os.Exit(2)
+	case launch.KindSubcommand:
+		err = subcommand(args)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pier:", err)
 		os.Exit(1)
 	}
+}
+
+func subcommand(args []string) error {
+	switch args[0] {
+	case "setup":
+		return setup.Run(self())
+	case "alias":
+		env := onboard.DefaultEnv(self())
+		if len(args) < 2 {
+			onboard.ShowAlias(os.Stdout, env)
+			return nil
+		}
+		return onboard.SetAlias(prompt.Std(), env, args[1])
+	case "run":
+		return ui.Run()
+	case "new":
+		attach, err := ui.RunNew()
+		if err != nil || attach == "" {
+			return err
+		}
+		return tmux.Attach(attach)
+	case "keys":
+		return ui.RunKeys()
+	case "ensure":
+		return tmux.EnsureSidebar(targetSession(), self())
+	case "toggle":
+		return tmux.ToggleSidebar(targetSession(), self())
+	case "done":
+		return doneCmd()
+	case "reap":
+		reapCmd()
+		return nil
+	case "hook":
+		if len(args) < 2 {
+			usage()
+			os.Exit(2)
+		}
+		payload, _ := io.ReadAll(os.Stdin)
+		// Liveness bookkeeping is best-effort: a failed write must never
+		// surface as a hook error inside Claude Code.
+		switch args[1] {
+		case "user-prompt-submit":
+			_ = resume.RecordPrompt(resume.Dir(), payload)
+		case "session-end":
+			_ = resume.RecordEnd(resume.Dir(), payload)
+		}
+		return state.Record(state.Dir(), args[1], payload)
+	case "status":
+		if len(args) < 2 {
+			usage()
+			os.Exit(2)
+		}
+		fmt.Print(statusLine(args[1]))
+	}
+	return nil
 }
 
 func targetSession() string {
@@ -142,4 +179,17 @@ func statusLine(path string) string {
 		return fmt.Sprintf("#[fg=cyan]%s#[default]", short)
 	}
 	return fmt.Sprintf("#[fg=cyan]%s #[fg=green]⎇ %s#[default]", short, branch)
+}
+
+// reapCmd kills every session left with only a sidebar pane. It runs from
+// the pane-exited hook, so it is context-free — the hook's formats don't
+// reliably name the dead pane's session — and never fails: fire-and-forget.
+func reapCmd() {
+	panes, err := tmux.ListPanes()
+	if err != nil {
+		return
+	}
+	for _, s := range tmux.SidebarOnlySessions(panes) {
+		_ = tmux.KillSession(s)
+	}
 }

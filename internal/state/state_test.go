@@ -216,3 +216,13 @@ func TestCleanup(t *testing.T) {
 		t.Error("dead pane state should be removed")
 	}
 }
+
+func TestDirUnderRoot(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/x/state")
+	if got := Root(); got != "/x/state/pier" {
+		t.Errorf("Root = %q", got)
+	}
+	if got := Dir(); got != "/x/state/pier/panes" {
+		t.Errorf("Dir = %q", got)
+	}
+}

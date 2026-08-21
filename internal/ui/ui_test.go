@@ -70,3 +70,13 @@ func TestTitleFromTranscriptEmptySession(t *testing.T) {
 		t.Errorf("got %q, want empty for a promptless session", got)
 	}
 }
+
+func TestKeysContentSaysTerminal(t *testing.T) {
+	c := keysContent()
+	if strings.Contains(c, "shell") {
+		t.Errorf("cheatsheet still says shell:\n%s", c)
+	}
+	if !strings.Contains(c, "terminal session") {
+		t.Error("cheatsheet should describe ^S / $ as a terminal session")
+	}
+}

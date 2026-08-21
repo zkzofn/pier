@@ -21,7 +21,7 @@ func TestTmuxConfCreatesAndSkips(t *testing.T) {
 		t.Errorf("want added, got %q", msg)
 	}
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}"`, "bind-key N display-popup"} {
+	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}"`, "bind-key N display-popup", "set -g detach-on-destroy off", self + ` reap"'`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config missing %q", want)
 		}
@@ -181,5 +181,133 @@ func TestClaudeHooksMergesAndBacksUp(t *testing.T) {
 	}
 	if !strings.Contains(msg, "skipped") {
 		t.Errorf("want skipped on re-run, got %q", msg)
+	}
+}
+
+func TestUpsertBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fish", "config.fish") // parent dir missing
+	block := markerBegin + "\nalias cl='pier'\n" + markerEnd + "\n"
+
+	st, err := UpsertBlock(path, block)
+	if err != nil || st != BlockAdded {
+		t.Fatalf("first write: %v %v", st, err)
+	}
+	if st, _ := UpsertBlock(path, block); st != BlockUnchanged {
+		t.Errorf("same block again should be unchanged, got %v", st)
+	}
+	// content around the block survives an update
+	data, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte("set -x FOO 1\n\n"+string(data)+"\nfunction later\nend\n"), 0o644)
+	st, err = UpsertBlock(path, markerBegin+"\nalias zz='pier'\n"+markerEnd+"\n")
+	if err != nil || st != BlockUpdated {
+		t.Fatalf("update: %v %v", st, err)
+	}
+	got, _ := os.ReadFile(path)
+	conf := string(got)
+	if !strings.HasPrefix(conf, "set -x FOO 1\n") || !strings.HasSuffix(conf, "function later\nend\n") {
+		t.Errorf("content outside the block not preserved:\n%s", conf)
+	}
+	if strings.Contains(conf, "alias cl=") || !strings.Contains(conf, "alias zz='pier'") || strings.Count(conf, markerBegin) != 1 {
+		t.Errorf("block not replaced in place:\n%s", conf)
+	}
+}
+
+func TestShellAliasAndAliasIn(t *testing.T) {
+	rc := filepath.Join(t.TempDir(), ".zshrc")
+	os.WriteFile(rc, []byte("export EDITOR=vim\n"), 0o644)
+	if _, err := ShellAlias(rc, "cl", "pier"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(rc)
+	if !strings.Contains(string(data), "\n"+markerBegin+"\nalias cl='pier'\n"+markerEnd+"\n") {
+		t.Errorf("alias block wrong:\n%s", data)
+	}
+	if got := AliasIn(rc); got != "cl" {
+		t.Errorf("AliasIn = %q, want cl", got)
+	}
+	ShellAlias(rc, "pp", "/Users/me/.local/bin/pier")
+	if got := AliasIn(rc); got != "pp" {
+		t.Errorf("AliasIn after replace = %q, want pp", got)
+	}
+	if got := AliasIn(filepath.Join(t.TempDir(), "none")); got != "" {
+		t.Errorf("missing file -> no alias, got %q", got)
+	}
+}
+
+func TestNeedsSetup(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, ".tmux.conf")
+	settings := filepath.Join(dir, "settings.json")
+	if !NeedsSetup(conf, settings) {
+		t.Error("nothing written yet -> needs setup")
+	}
+	TmuxConf(conf, self)
+	if !NeedsSetup(conf, settings) {
+		t.Error("tmux only -> still needs hooks")
+	}
+	ClaudeHooks(settings, self)
+	if NeedsSetup(conf, settings) {
+		t.Error("both wired -> no setup needed")
+	}
+	// a hand-written (unmanaged) tmux config counts as configured
+	os.WriteFile(conf, []byte(`set-hook -g client-attached 'run-shell "~/.local/bin/pier ensure"'`+"\n"), 0o644)
+	if NeedsSetup(conf, settings) {
+		t.Error("unmanaged pier config + hooks -> no setup needed")
+	}
+	os.Remove(settings)
+	if !NeedsSetup(conf, settings) {
+		t.Error("hooks only missing -> needs setup")
+	}
+}
+
+func TestRefreshTmuxBlock(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, ".tmux.conf")
+	oldBin := filepath.Join(dir, "old", "pier")
+	os.MkdirAll(filepath.Dir(oldBin), 0o755)
+	os.WriteFile(oldBin, []byte("#!/bin/sh\n"), 0o755)
+	devBin := filepath.Join(dir, "dev", "pier")
+	outdated := "set -g prefix C-a\n\n" + markerBegin + "\n" +
+		`set-hook -g client-attached 'run-shell "` + oldBin + ` ensure"'` + "\n" + markerEnd + "\n"
+
+	// outdated block, its binary still exists -> refreshed, path kept
+	os.WriteFile(conf, []byte(outdated), 0o644)
+	msg, err := RefreshTmuxBlock(conf, devBin)
+	if err != nil || msg == "" {
+		t.Fatalf("outdated block should be refreshed: %q %v", msg, err)
+	}
+	data, _ := os.ReadFile(conf)
+	if !strings.Contains(string(data), oldBin+" reap") || strings.Contains(string(data), devBin) {
+		t.Errorf("refresh must keep the existing binary path:\n%s", data)
+	}
+	// up to date now, different binary running -> untouched
+	before, _ := os.ReadFile(conf)
+	if msg, _ := RefreshTmuxBlock(conf, devBin); msg != "" {
+		t.Errorf("current block must not be rewritten for a path change, got %q", msg)
+	}
+	if after, _ := os.ReadFile(conf); string(after) != string(before) {
+		t.Error("file changed although the block was current")
+	}
+	// the recorded binary is gone -> the running one takes over
+	os.Remove(oldBin)
+	os.WriteFile(conf, []byte(outdated), 0o644)
+	if msg, _ := RefreshTmuxBlock(conf, devBin); msg == "" {
+		t.Fatal("outdated block with a dead path should be refreshed")
+	}
+	data, _ = os.ReadFile(conf)
+	if !strings.Contains(string(data), devBin+" ensure") {
+		t.Errorf("dead path should be replaced by self:\n%s", data)
+	}
+	// unmanaged or missing -> no-op
+	manual := `set-hook -g client-attached 'run-shell "~/.local/bin/pier ensure"'` + "\n"
+	os.WriteFile(conf, []byte(manual), 0o644)
+	if msg, _ := RefreshTmuxBlock(conf, devBin); msg != "" {
+		t.Errorf("unmanaged config must be left alone, got %q", msg)
+	}
+	if got, _ := os.ReadFile(conf); string(got) != manual {
+		t.Error("unmanaged config was modified")
+	}
+	if msg, err := RefreshTmuxBlock(filepath.Join(dir, "nope"), devBin); msg != "" || err != nil {
+		t.Errorf("missing file -> nothing: %q %v", msg, err)
 	}
 }

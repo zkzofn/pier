@@ -44,6 +44,39 @@ func paneRank(p tmux.Pane) int {
 	return 0
 }
 
+// outranks reports whether p represents its session better than cur: the
+// higher rank first, then the lower pane id as a stable tie-break.
+func outranks(p, cur tmux.Pane) bool {
+	rp, rc := paneRank(p), paneRank(cur)
+	return rp > rc || (rp == rc && p.ID < cur.ID)
+}
+
+// Representative picks the pane that stands for a session: the best-ranked
+// Claude Code pane when the session has one (so a split shell holding focus
+// never turns a Claude session into a "$" row), else its best-ranked regular
+// pane. Sidebar panes never qualify; ok is false when nothing does.
+func Representative(panes []tmux.Pane, session string) (best tmux.Pane, ok bool) {
+	bestCC := false
+	for _, p := range panes {
+		if p.Sidebar || p.Session != session {
+			continue
+		}
+		cc := IsClaudeCommand(p.Command)
+		switch {
+		case !ok:
+			// first candidate
+		case cc && !bestCC:
+			// a Claude pane beats any shell pane
+		case cc != bestCC:
+			continue // shell pane can't beat the Claude pane we hold
+		case !outranks(p, best):
+			continue
+		}
+		best, ok, bestCC = p, true, cc
+	}
+	return best, ok
+}
+
 // Group filters Claude Code panes and groups them by pane_current_path.
 // A session with no Claude Code pane at all still gets one entry — its most
 // prominent regular pane (focused > current window > first) represents it as
@@ -60,7 +93,7 @@ func Group(panes []tmux.Pane, branch BranchFunc) []Worktree {
 		if p.Sidebar || hasCC[p.Session] {
 			continue
 		}
-		if cur, ok := shellRep[p.Session]; !ok || paneRank(p) > paneRank(cur) {
+		if cur, ok := shellRep[p.Session]; !ok || outranks(p, cur) {
 			shellRep[p.Session] = p
 		}
 	}
