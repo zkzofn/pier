@@ -14,7 +14,7 @@ func TestClassify(t *testing.T) {
 		{[]string{"-v"}, KindVersion}, {[]string{"--version"}, KindVersion}, {[]string{"version"}, KindVersion},
 		{[]string{"-h"}, KindHelp}, {[]string{"--help"}, KindHelp}, {[]string{"help"}, KindHelp},
 		{[]string{"setup"}, KindSubcommand}, {[]string{"new"}, KindSubcommand}, {[]string{"alias", "cl"}, KindSubcommand},
-		{[]string{"reap"}, KindSubcommand}, {[]string{"hook", "stop"}, KindSubcommand},
+		{[]string{"reap"}, KindSubcommand}, {[]string{"upgrade"}, KindSubcommand}, {[]string{"hook", "stop"}, KindSubcommand},
 		{[]string{"setpu"}, KindUnknown}, {[]string{"mcp"}, KindUnknown},
 	}
 	for _, c := range cases {

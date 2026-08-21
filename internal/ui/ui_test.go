@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"pier/internal/state"
 )
 
 func writeTranscript(t *testing.T, lines string) string {
@@ -78,5 +80,30 @@ func TestKeysContentSaysTerminal(t *testing.T) {
 	}
 	if !strings.Contains(c, "terminal session") {
 		t.Error("cheatsheet should describe ^S / $ as a terminal session")
+	}
+}
+
+func TestSidebarUpdateRow(t *testing.T) {
+	m := Model{cursor: -1, width: 30, height: 40, states: map[string]state.PaneState{}, titles: map[string]string{}}
+	m.buildRows()
+	last := m.rows[len(m.rows)-1]
+	if last.kind != rowHelp {
+		t.Fatalf("without a known update the last row is help, got %v", last.kind)
+	}
+
+	m.latest = "1.1.0"
+	m.buildRows()
+	last = m.rows[len(m.rows)-1]
+	if last.kind != rowUpdate || last.text != "1.1.0" {
+		t.Fatalf("update row missing: %+v", last)
+	}
+	v := m.View()
+	if !strings.Contains(v, "↑ 1.1.0 · pier upgrade") {
+		t.Errorf("view should name the version and the command:\n%s", v)
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 29 {
+			t.Errorf("line %d cols wide, over the sidebar's 29: %q", w, line)
+		}
 	}
 }

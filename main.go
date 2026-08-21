@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"pier/internal/discover"
 	"pier/internal/launch"
@@ -17,7 +18,7 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
@@ -29,6 +30,7 @@ usage:
   pier <claude flags...>    pass straight through to claude (e.g. pier -r)
   pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
   pier alias [name]         show or set the shell alias for pier
+  pier upgrade              check the Homebrew tap now and upgrade
   pier run                  run the sidebar TUI (inside a tmux pane)
   pier new                  new-session picker (sidebar "+" / prefix+N /
                               standalone outside tmux — attaches on create)
@@ -88,7 +90,10 @@ func subcommand(args []string) error {
 			return nil
 		}
 		return onboard.SetAlias(prompt.Std(), env, args[1])
+	case "upgrade":
+		return launch.Upgrade(version, self())
 	case "run":
+		ui.Version = version
 		return ui.Run()
 	case "new":
 		attach, err := ui.RunNew()
@@ -99,6 +104,12 @@ func subcommand(args []string) error {
 	case "keys":
 		return ui.RunKeys()
 	case "ensure":
+		// The attach / session-change hook is the one thing that runs no
+		// matter how someone uses pier, so it is where an upgraded binary
+		// gets its tmux block refreshed — people who never type bare `pier`
+		// would otherwise keep the old block forever. Silent: run-shell
+		// shows any output in view mode.
+		refreshTmuxBlockQuietly(self())
 		return tmux.EnsureSidebar(targetSession(), self())
 	case "toggle":
 		return tmux.ToggleSidebar(targetSession(), self())
@@ -130,6 +141,20 @@ func subcommand(args []string) error {
 		fmt.Print(statusLine(args[1]))
 	}
 	return nil
+}
+
+// refreshTmuxBlockQuietly brings pier's managed ~/.tmux.conf block up to
+// date (keeping the binary path it already records) and reloads the server
+// when it changed. Every failure is ignored: this runs from a hook.
+func refreshTmuxBlockQuietly(self string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	conf := filepath.Join(home, ".tmux.conf")
+	if msg, err := setup.RefreshTmuxBlock(conf, self); err == nil && msg != "" {
+		setup.ReloadTmux(conf)
+	}
 }
 
 func targetSession() string {

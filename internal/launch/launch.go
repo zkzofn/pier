@@ -37,6 +37,7 @@ const (
 var subcommands = map[string]bool{
 	"setup": true, "alias": true, "run": true, "new": true, "keys": true,
 	"ensure": true, "toggle": true, "done": true, "reap": true, "hook": true, "status": true,
+	"upgrade": true,
 }
 
 // Classify decides what the arguments mean. Flags go to claude so `pier -r`
@@ -110,18 +111,49 @@ func Run(version, self string) error {
 	return tmux.Attach(attach)
 }
 
+// formulaURL is the tap formula the version check reads; PIER_UPDATE_URL
+// overrides it (e2e).
+func formulaURL() string {
+	if u := os.Getenv("PIER_UPDATE_URL"); u != "" {
+		return u
+	}
+	return update.FormulaURL
+}
+
+// Upgrade is `pier upgrade`: ask the tap right now — no daily cache, the
+// user asked — and run the Homebrew upgrade when there is one. Source
+// installs get the git instructions instead.
+func Upgrade(version, self string) error {
+	latest, err := update.Refresh(update.CachePath(), formulaURL(), time.Now(), func(u string) (string, error) {
+		return update.Fetch(u, 5*time.Second)
+	})
+	if err != nil {
+		return fmt.Errorf("checking the Homebrew tap: %w", err)
+	}
+	if !update.Newer(latest, version) {
+		fmt.Printf("pier %s is up to date (Homebrew tap has %s)\n", version, latest)
+		return nil
+	}
+	if !update.IsBrewInstall(self) {
+		fmt.Printf("pier %s is available (you have %s).\nThis is a source install — update it with:\n  cd <your pier checkout> && git pull && make setup\n", latest, version)
+		return nil
+	}
+	fmt.Printf("upgrading pier %s → %s\n", version, latest)
+	if err := update.Upgrade(os.Stdout); err != nil {
+		return err
+	}
+	fmt.Println("done — `pier` from here on runs the new version")
+	return nil
+}
+
 // checkUpdate runs the daily tap check and, for brew installs, offers the
 // upgrade. Returns true when the binary was replaced and must be re-exec'd.
 func checkUpdate(p *prompt.Prompter, version, self string) bool {
 	if os.Getenv("PIER_NO_UPDATE_CHECK") != "" {
 		return false
 	}
-	url := update.FormulaURL
-	if u := os.Getenv("PIER_UPDATE_URL"); u != "" {
-		url = u
-	}
 	now := time.Now()
-	latest, notify := update.Check(update.CachePath(), url, version, now, func(u string) (string, error) {
+	latest, notify := update.Check(update.CachePath(), formulaURL(), version, now, func(u string) (string, error) {
 		return update.Fetch(u, 2*time.Second)
 	})
 	if !notify {
@@ -129,7 +161,7 @@ func checkUpdate(p *prompt.Prompter, version, self string) bool {
 	}
 	update.MarkNotified(update.CachePath(), now)
 	if !update.IsBrewInstall(self) {
-		fmt.Fprintf(p.Out, "pier %s is available (you have %s) — https://github.com/zkzofn/pier#install\n", latest, version)
+		fmt.Fprintf(p.Out, "pier %s is available (you have %s) — run `pier upgrade` for how to update\n", latest, version)
 		return false
 	}
 	if !p.YesNo(fmt.Sprintf("pier %s is available (you have %s). Upgrade with Homebrew now?", latest, version), false) {

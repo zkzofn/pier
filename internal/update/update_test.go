@@ -89,3 +89,28 @@ func TestIsBrewInstall(t *testing.T) {
 		t.Error("a path outside Cellar is not a brew install")
 	}
 }
+
+func TestRefreshIgnoresTheInterval(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "update.json")
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	fetch := func(string) (string, error) { calls++; return "1.1.0", nil }
+
+	// a fresh cache would normally suppress the network call
+	SaveCache(cache, Cache{CheckedAt: now, Latest: "1.0.0"})
+	got, err := Refresh(cache, "u", now.Add(time.Minute), fetch)
+	if err != nil || got != "1.1.0" || calls != 1 {
+		t.Fatalf("Refresh = %q %v (calls=%d), want a fresh fetch", got, err, calls)
+	}
+	if c := LoadCache(cache); c.Latest != "1.1.0" || !c.CheckedAt.Equal(now.Add(time.Minute)) {
+		t.Errorf("cache not updated: %+v", c)
+	}
+	// a failure surfaces but keeps the last known version
+	failing := func(string) (string, error) { return "", errors.New("offline") }
+	if _, err := Refresh(cache, "u", now.Add(time.Hour), failing); err == nil {
+		t.Error("a failed fetch must return the error")
+	}
+	if c := LoadCache(cache); c.Latest != "1.1.0" {
+		t.Errorf("failure should keep the known version: %+v", c)
+	}
+}
