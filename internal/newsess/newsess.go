@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"pier/internal/discover"
 	"pier/internal/tmux"
 )
 
@@ -17,23 +18,25 @@ import (
 type Candidate struct {
 	Path       string
 	Name       string // proposed session name (directory base name, sanitized)
-	Open       string // non-empty: a session with this name/path is already running
 	Manual     bool   // synthesized from the user's typed query
 	NeedsMkdir bool   // the typed path doesn't exist yet — create it first
 }
 
 // Collect gathers candidate directories: ~/dev/*, the home dir, and every
 // path Claude Code was previously used in (transcript history). Directories
-// hosting a live CC pane are flagged with the session name.
+// hosting a live (non-sidebar) pane are left out — the picker lists those as
+// open sessions instead (see OpenSessions).
 func Collect(home string, panes []tmux.Pane) []Candidate {
-	openByPath := map[string]string{}
+	// Both spellings of every live pane's directory: pane_current_path is
+	// resolved by the kernel, while the paths pier scans keep whatever
+	// symlinks the home dir was reached through (/tmp vs /private/tmp).
+	open := map[string]bool{}
 	for _, p := range panes {
 		if p.Sidebar {
 			continue
 		}
-		if _, ok := openByPath[p.Path]; !ok {
-			openByPath[p.Path] = p.Session
-		}
+		open[p.Path] = true
+		open[resolve(p.Path)] = true
 	}
 
 	seen := map[string]bool{}
@@ -46,11 +49,10 @@ func Collect(home string, panes []tmux.Pane) []Candidate {
 			return
 		}
 		seen[path] = true
-		cands = append(cands, Candidate{
-			Path: path,
-			Name: Sanitize(filepath.Base(path)),
-			Open: openByPath[path],
-		})
+		if open[path] || open[resolve(path)] {
+			return // a running session already holds this directory
+		}
+		cands = append(cands, Candidate{Path: path, Name: Sanitize(filepath.Base(path))})
 	}
 
 	entries, _ := os.ReadDir(filepath.Join(home, "dev"))
@@ -66,6 +68,59 @@ func Collect(home string, panes []tmux.Pane) []Candidate {
 
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Path < cands[j].Path })
 	return cands
+}
+
+// resolve follows symlinks, falling back to the path itself when it can't
+// (a directory that no longer exists, a permission error).
+func resolve(path string) string {
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	return path
+}
+
+// Open is a running tmux session as the picker lists it.
+type Open struct {
+	Session string
+	Path    string    // the representative pane's working directory
+	Pane    tmux.Pane // representative pane — the sidebar's icon rules apply to it
+}
+
+// OpenSessions lists running sessions in sidebar order (discover.SessionOrder:
+// worktree path, then session name), each with its representative pane.
+// Sessions holding only a sidebar pane are skipped, as is `exclude` — the
+// current session when the picker runs inside tmux, where jumping there is a
+// no-op.
+func OpenSessions(panes []tmux.Pane, exclude string) []Open {
+	groups := discover.Group(panes, func(string) string { return "" })
+	var out []Open
+	for _, s := range discover.SessionOrder(groups) {
+		if s == exclude {
+			continue
+		}
+		rep, ok := discover.Representative(panes, s)
+		if !ok {
+			continue
+		}
+		out = append(out, Open{Session: s, Path: rep.Path, Pane: rep})
+	}
+	return out
+}
+
+// FilterOpen returns the open sessions whose name or path contains the query
+// (case-insensitive). An empty query returns everything.
+func FilterOpen(opens []Open, query string) []Open {
+	if query == "" {
+		return opens
+	}
+	q := strings.ToLower(query)
+	var out []Open
+	for _, o := range opens {
+		if strings.Contains(strings.ToLower(o.Session), q) || strings.Contains(strings.ToLower(o.Path), q) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // historyPaths extracts working directories from Claude Code transcripts.

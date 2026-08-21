@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -40,24 +41,39 @@ func Run(self string) error {
 	fmt.Println(msg)
 
 	// Apply live if a tmux server is already running.
-	if exec.Command("tmux", "has-session").Run() == nil {
-		if exec.Command("tmux", "source-file", tmuxConf).Run() == nil {
-			fmt.Println("tmux: config reloaded on the running server")
-		}
+	if ReloadTmux(tmuxConf) {
+		fmt.Println("tmux: config reloaded on the running server")
 	}
-	fmt.Println("done — attach to (or switch) a tmux session and the sidebar appears")
+	fmt.Println("done — run `pier` (or your alias) to start")
 	return nil
+}
+
+// ReloadTmux re-sources the config on a running server; false when no
+// server is up or the reload failed.
+func ReloadTmux(tmuxConf string) bool {
+	if exec.Command("tmux", "has-session").Run() != nil {
+		return false
+	}
+	return exec.Command("tmux", "source-file", tmuxConf).Run() == nil
 }
 
 func tmuxBlock(self string) string {
 	return strings.Join([]string{
 		markerBegin,
 		"set -g mouse on",
+		// a session's end moves the client to the most recently active
+		// session instead of dropping it out of tmux — `exit` in a pier
+		// session behaves like prefix+x; only the last session closes the
+		// client.
+		"set -g detach-on-destroy off",
 		"set -g status-interval 5",
 		"set -g status-right-length 60",
 		`set -g status-right '#(` + self + ` status "#{pane_current_path}") %H:%M '`,
 		`set-hook -g client-attached 'run-shell "` + self + ` ensure"'`,
 		`set-hook -g client-session-changed 'run-shell "` + self + ` ensure"'`,
+		// the moment a pane dies, kill any session left holding only a
+		// sidebar — no 2 s wait for the sidebar's own poll.
+		`set-hook -g pane-exited 'run-shell "` + self + ` reap"'`,
 		`bind-key g run-shell "` + self + ` toggle"`,
 		// overrides tmux's default kill-pane binding — pier's session-level
 		// "finish and move on" is the more frequent action here.
@@ -71,6 +87,66 @@ func tmuxBlock(self string) string {
 	}, "\n")
 }
 
+// BlockStatus is what UpsertBlock did to the file.
+type BlockStatus int
+
+const (
+	BlockUnchanged BlockStatus = iota
+	BlockAdded
+	BlockUpdated
+)
+
+// blockBounds locates pier's marker block in content: [start, end) covers
+// the begin marker through the end marker inclusive.
+func blockBounds(content string) (start, end int, ok bool) {
+	i := strings.Index(content, markerBegin)
+	if i < 0 {
+		return 0, 0, false
+	}
+	j := strings.Index(content[i:], markerEnd)
+	if j < 0 {
+		return 0, 0, false
+	}
+	return i, i + j + len(markerEnd), true
+}
+
+// WithoutBlock returns content with pier's marker block cut out.
+func WithoutBlock(content string) string {
+	if i, j, ok := blockBounds(content); ok {
+		return content[:i] + content[j:]
+	}
+	return content
+}
+
+// UpsertBlock writes block — marker lines included, newline-terminated —
+// into the file at path: appended when the file has no marker block,
+// replaced in place when it has a different one, untouched when identical.
+// Content outside the markers is preserved; the file (and its directory) is
+// created when missing.
+func UpsertBlock(path, block string) (BlockStatus, error) {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return BlockUnchanged, err
+	}
+	content := string(data)
+	body := strings.TrimSuffix(block, "\n")
+	if i, j, ok := blockBounds(content); ok {
+		if content[i:j] == body {
+			return BlockUnchanged, nil
+		}
+		content = content[:i] + body + content[j:]
+		return BlockUpdated, os.WriteFile(path, []byte(content), 0o644)
+	}
+	if content != "" {
+		content = strings.TrimRight(content, "\n") + "\n\n"
+	}
+	content += block
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return BlockUnchanged, err
+	}
+	return BlockAdded, os.WriteFile(path, []byte(content), 0o644)
+}
+
 // TmuxConf writes the pier block into the tmux config: appended when absent,
 // rewritten in place when the marker block exists but is outdated (so
 // upgrades pick up new bindings). A pier reference outside our markers means
@@ -81,30 +157,109 @@ func TmuxConf(path, self string) (string, error) {
 		return "", err
 	}
 	content := string(data)
-	if i := strings.Index(content, markerBegin); i >= 0 {
-		if j := strings.Index(content, markerEnd); j > i {
-			block := strings.TrimSuffix(tmuxBlock(self), "\n")
-			if content[i:j+len(markerEnd)] == block {
-				return "tmux.conf: already up to date — skipped", nil
-			}
-			content = content[:i] + block + content[j+len(markerEnd):]
-			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-				return "", err
-			}
-			return "tmux.conf: pier block updated", nil
-		}
-	}
-	if strings.Contains(content, "pier ensure") {
+	if _, _, managed := blockBounds(content); !managed && strings.Contains(content, "pier ensure") {
 		return "tmux.conf: already configured (unmanaged) — skipped", nil
 	}
-	if content != "" {
-		content = strings.TrimRight(content, "\n") + "\n\n"
-	}
-	content += tmuxBlock(self)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	st, err := UpsertBlock(path, tmuxBlock(self))
+	if err != nil {
 		return "", err
 	}
-	return "tmux.conf: pier block added", nil
+	switch st {
+	case BlockAdded:
+		return "tmux.conf: pier block added", nil
+	case BlockUpdated:
+		return "tmux.conf: pier block updated", nil
+	}
+	return "tmux.conf: already up to date — skipped", nil
+}
+
+// NeedsSetup reports whether pier still has to be wired: no pier tmux
+// config at all (neither our marker block nor a hand-written `pier ensure`
+// hook), or no pier hooks in Claude Code's settings. An outdated managed
+// block is not "needs setup" — RefreshTmuxBlock handles that.
+func NeedsSetup(tmuxConfPath, settingsPath string) bool {
+	conf, _ := os.ReadFile(tmuxConfPath)
+	_, _, managed := blockBounds(string(conf))
+	tmuxOK := managed || strings.Contains(string(conf), "pier ensure")
+	settings, _ := os.ReadFile(settingsPath)
+	hooksOK := strings.Contains(string(settings), "pier hook")
+	return !tmuxOK || !hooksOK
+}
+
+var selfRe = regexp.MustCompile(`run-shell "([^"]+) ensure"`)
+
+// RefreshTmuxBlock brings an existing managed block up to date with this
+// binary's tmuxBlock while keeping the binary path the block already uses —
+// a dev build (`./bin/pier`, `go run .`) or a second install must not
+// repoint the live config; that is `pier setup`'s job. Only when that path
+// no longer exists does the running binary take over (on Linux the managed
+// block holds a versioned Cellar path that disappears on upgrade). Unmanaged
+// or missing blocks are left alone. Returns a one-line message when the file
+// changed, "" otherwise.
+func RefreshTmuxBlock(path, self string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	content := string(data)
+	i, j, ok := blockBounds(content)
+	if !ok {
+		return "", nil
+	}
+	target := self
+	if m := selfRe.FindStringSubmatch(content[i:j]); m != nil {
+		if _, err := os.Stat(expandHome(m[1])); err == nil {
+			target = m[1]
+		}
+	}
+	st, err := UpsertBlock(path, tmuxBlock(target))
+	if err != nil {
+		return "", err
+	}
+	if st == BlockUpdated {
+		return "tmux.conf: pier block updated", nil
+	}
+	return "", nil
+}
+
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}
+
+func aliasBlock(name, target string) string {
+	return strings.Join([]string{markerBegin, "alias " + name + "='" + target + "'", markerEnd, ""}, "\n")
+}
+
+// ShellAlias writes `alias name='target'` into the shell rc file at path as
+// pier's marker block — added, or replaced when a previous alias is there.
+func ShellAlias(path, name, target string) (BlockStatus, error) {
+	return UpsertBlock(path, aliasBlock(name, target))
+}
+
+var aliasRe = regexp.MustCompile(`(?m)^alias ([^=\s]+)='`)
+
+// AliasIn returns the alias name pier's block in the rc file defines, or "".
+func AliasIn(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	i, j, ok := blockBounds(string(data))
+	if !ok {
+		return ""
+	}
+	if m := aliasRe.FindStringSubmatch(string(data)[i:j]); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 var hookEvents = []struct {

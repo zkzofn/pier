@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -153,6 +155,29 @@ func SessionNames() map[string]bool {
 	return names
 }
 
+// SidebarOnlySessions returns, sorted, the sessions whose every pane is a
+// sidebar — what is left after a session's real panes exited. `pier reap`
+// kills them from the pane-exited hook; the sidebar's own alone-check is only
+// the fallback for servers without the hook.
+func SidebarOnlySessions(panes []Pane) []string {
+	real := map[string]bool{}
+	seen := map[string]bool{}
+	for _, p := range panes {
+		seen[p.Session] = true
+		if !p.Sidebar {
+			real[p.Session] = true
+		}
+	}
+	var out []string
+	for s := range seen {
+		if !real[s] {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // NewSessionDetached creates a detached session at path running command
 // (empty: tmux's default shell) without touching any client. Starts the
 // server if none is running.
@@ -184,14 +209,38 @@ func SwitchTo(session string) error {
 	return err
 }
 
-// AttachExec replaces the current process with `tmux attach-session` — for
-// standalone (outside-tmux) contexts where there is no client to switch.
-func AttachExec(session string) error {
-	path, err := exec.LookPath("tmux")
-	if err != nil {
+// Attach runs `tmux attach-session` as a child with our terminal and returns
+// when the client exits — for standalone (outside-tmux) contexts where there
+// is no client to switch. When the client left cleanly because the server is
+// gone (the last session was closed), the "[exited]" line tmux just printed
+// is erased so the terminal looks as it did before pier ran; a deliberate
+// detach (server still up) keeps tmux's "[detached …]" message, and a
+// non-zero client exit keeps whatever tmux said.
+func Attach(session string) error {
+	cmd := exec.Command("tmux", "attach-session", "-t", "="+session)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// The client owns the tty in raw mode, so these normally never arrive;
+	// ignoring them covers the mode-switch instants, when a stray ^C must
+	// not kill us and leave the client orphaned under a shell that thinks
+	// the job is done. SIGTSTP keeps its default so ^Z stops the whole job.
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT)
+	defer signal.Reset(syscall.SIGINT, syscall.SIGQUIT)
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return nil // tmux printed its own message
+		}
 		return err
 	}
-	return syscall.Exec(path, []string{"tmux", "attach-session", "-t", "=" + session}, os.Environ())
+	if ServerAlive() {
+		return nil
+	}
+	_, _ = os.Stdout.WriteString("\x1b[1A\x1b[2K")
+	return nil
+}
+
+// ServerAlive reports whether a tmux server with at least one session is up.
+func ServerAlive() bool {
+	return exec.Command("tmux", "has-session").Run() == nil
 }
 
 // KillSession kills a session by exact name ("=" disables prefix matching —

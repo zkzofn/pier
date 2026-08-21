@@ -8,19 +8,19 @@ import (
 
 func TestIsClaudeCommand(t *testing.T) {
 	cases := map[string]bool{
-		"2.1.206":    true, // observed live: CC process title is its version
-		"2.1.211":    true,
-		"claude":     true,
-		"1.0":        true,
-		"3.6a":       true, // tmux-style version suffix
-		"zsh":        false,
-		"node":       false,
-		"nvim":       false,
+		"2.1.206":  true, // observed live: CC process title is its version
+		"2.1.211":  true,
+		"claude":   true,
+		"1.0":      true,
+		"3.6a":     true, // tmux-style version suffix
+		"zsh":      false,
+		"node":     false,
+		"nvim":     false,
 		"pier":     false,
-		"2.1.206.":   false,
-		"v2.1.206":   false,
-		"":           false,
-		"go1.26.5":   false,
+		"2.1.206.": false,
+		"v2.1.206": false,
+		"":         false,
+		"go1.26.5": false,
 	}
 	for cmd, want := range cases {
 		if got := IsClaudeCommand(cmd); got != want {
@@ -35,9 +35,9 @@ func TestGroup(t *testing.T) {
 	panes := []tmux.Pane{
 		{Session: "suite2", ID: "%1", Command: "2.1.202", Path: "/dev/suite2"},
 		{Session: "suite1", ID: "%2", Command: "2.1.206", Path: "/dev/suite1"},
-		{Session: "suite2", ID: "%3", Command: "zsh", Path: "/dev/suite2"},     // not CC
-		{Session: "suite2", ID: "%4", Command: "pier", Path: "/dev/suite2"},  // not CC
-		{Session: "suite2", ID: "%5", Command: "claude", Path: "/dev/suite2"},  // 2nd CC in suite2
+		{Session: "suite2", ID: "%3", Command: "zsh", Path: "/dev/suite2"},               // not CC
+		{Session: "suite2", ID: "%4", Command: "pier", Path: "/dev/suite2"},              // not CC
+		{Session: "suite2", ID: "%5", Command: "claude", Path: "/dev/suite2"},            // 2nd CC in suite2
 		{Session: "x", ID: "%6", Command: "2.1.211", Path: "/dev/suite2", Sidebar: true}, // marked sidebar
 	}
 	got := Group(panes, fakeBranch)
@@ -147,5 +147,35 @@ func TestSessionOrderAndNext(t *testing.T) {
 	// Alone: nothing to switch to.
 	if got := NextSession([]string{"solo"}, []string{"solo"}, "solo"); got != "" {
 		t.Errorf("alone should return empty, got %q", got)
+	}
+}
+
+func TestRepresentative(t *testing.T) {
+	panes := []tmux.Pane{
+		// a focused shell split must not outrank the claude pane
+		{Session: "s", ID: "%2", Command: "zsh", WindowActive: true, PaneActive: true},
+		{Session: "s", ID: "%1", Command: "2.1.238", WindowActive: true},
+		{Session: "s", ID: "%9", Command: "pier", Sidebar: true, WindowActive: true, PaneActive: true},
+		// shell-only session: the focused pane wins
+		{Session: "term", ID: "%4", Command: "zsh", WindowActive: true},
+		{Session: "term", ID: "%5", Command: "zsh", WindowActive: true, PaneActive: true},
+		// equal rank: the lower pane id wins
+		{Session: "tie", ID: "%8", Command: "claude"},
+		{Session: "tie", ID: "%7", Command: "claude"},
+		// nothing but a sidebar
+		{Session: "empty", ID: "%6", Command: "pier", Sidebar: true},
+	}
+	cases := map[string]string{"s": "%1", "term": "%5", "tie": "%7"}
+	for session, want := range cases {
+		rep, ok := Representative(panes, session)
+		if !ok || rep.ID != want {
+			t.Errorf("Representative(%s) = %v ok=%v, want %s", session, rep.ID, ok, want)
+		}
+	}
+	if _, ok := Representative(panes, "empty"); ok {
+		t.Error("a sidebar-only session has no representative")
+	}
+	if _, ok := Representative(panes, "nosuch"); ok {
+		t.Error("unknown session has no representative")
 	}
 }

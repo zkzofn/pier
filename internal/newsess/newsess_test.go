@@ -8,7 +8,7 @@ import (
 	"pier/internal/tmux"
 )
 
-func TestCollect(t *testing.T) {
+func TestCollectLeavesOpenPathsToTheSessionList(t *testing.T) {
 	home := t.TempDir()
 	for _, d := range []string{"dev/suite1", "dev/wishi", "dev/.hidden"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
@@ -25,17 +25,56 @@ func TestCollect(t *testing.T) {
 	for _, c := range cands {
 		byPath[c.Path] = c
 	}
-	if c, ok := byPath[filepath.Join(home, "dev", "suite1")]; !ok || c.Open != "suite1" {
-		t.Errorf("suite1 should be collected and marked open: %+v", c)
+	if _, ok := byPath[filepath.Join(home, "dev", "suite1")]; ok {
+		t.Error("a directory hosting a live pane is listed as an open session, not a directory")
 	}
-	if c, ok := byPath[filepath.Join(home, "dev", "wishi")]; !ok || c.Open != "" {
-		t.Errorf("wishi should be collected, sidebar pane must not mark it open: %+v", c)
+	if _, ok := byPath[filepath.Join(home, "dev", "wishi")]; !ok {
+		t.Error("a sidebar pane's path does not count as open")
 	}
 	if _, ok := byPath[filepath.Join(home, "dev", ".hidden")]; ok {
 		t.Error("hidden dirs should be skipped")
 	}
 	if _, ok := byPath[home]; !ok {
 		t.Error("home dir should be a candidate")
+	}
+}
+
+func TestOpenSessions(t *testing.T) {
+	panes := []tmux.Pane{
+		{Session: "zeta", ID: "%1", Command: "claude", Path: "/Users/j/dev/zeta", WindowActive: true, PaneActive: true},
+		{Session: "alpha", ID: "%2", Command: "zsh", Path: "/Users/j/dev/alpha", WindowActive: true, PaneActive: true},
+		{Session: "alpha", ID: "%3", Command: "pier", Path: "/Users/j", Sidebar: true},
+		{Session: "lonely", ID: "%4", Command: "pier", Path: "/Users/j", Sidebar: true},
+		{Session: "me", ID: "%5", Command: "claude", Path: "/Users/j/dev/me", WindowActive: true, PaneActive: true},
+	}
+	got := OpenSessions(panes, "me")
+	if len(got) != 2 || got[0].Session != "alpha" || got[1].Session != "zeta" {
+		t.Fatalf("want [alpha zeta] in sidebar (path) order, got %+v", got)
+	}
+	if got[0].Path != "/Users/j/dev/alpha" || got[0].Pane.ID != "%2" {
+		t.Errorf("alpha should carry its representative pane: %+v", got[0])
+	}
+	if got := OpenSessions(panes, ""); len(got) != 3 {
+		t.Errorf("without an exclusion all three real sessions show: %+v", got)
+	}
+	if got := OpenSessions(nil, ""); len(got) != 0 {
+		t.Errorf("no panes -> no sessions, got %+v", got)
+	}
+}
+
+func TestFilterOpen(t *testing.T) {
+	opens := []Open{{Session: "suite2", Path: "/Users/j/dev/suite2"}, {Session: "recoder", Path: "/Users/j/dev/recoder"}}
+	if got := FilterOpen(opens, ""); len(got) != 2 {
+		t.Errorf("empty query keeps all, got %d", len(got))
+	}
+	if got := FilterOpen(opens, "SUITE"); len(got) != 1 || got[0].Session != "suite2" {
+		t.Errorf("case-insensitive name match failed: %+v", got)
+	}
+	if got := FilterOpen(opens, "dev/rec"); len(got) != 1 || got[0].Session != "recoder" {
+		t.Errorf("path match failed: %+v", got)
+	}
+	if got := FilterOpen(opens, "nope"); len(got) != 0 {
+		t.Errorf("no match should be empty, got %+v", got)
 	}
 }
 
@@ -93,5 +132,51 @@ func TestSanitizeAndUnique(t *testing.T) {
 	}
 	if got := Unique("fresh", taken); got != "fresh" {
 		t.Errorf("Unique = %q, want fresh", got)
+	}
+}
+
+// A pane's cwd and the directory pier scans can name the same physical
+// directory through different paths — the home dir itself may be reached
+// through a symlink (/tmp vs /private/tmp on macOS), so the scanned string
+// and pane_current_path differ. Such a directory is open, not a candidate.
+func TestCollectResolvesSymlinkedOpenPaths(t *testing.T) {
+	base := t.TempDir()
+	realHome := filepath.Join(base, "realhome")
+	if err := os.MkdirAll(filepath.Join(realHome, "dev", "proj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(realHome, "dev", "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "home") // reached through a symlink
+	if err := os.Symlink(realHome, home); err != nil {
+		t.Fatal(err)
+	}
+
+	paths := func(cands []Candidate) map[string]bool {
+		out := map[string]bool{}
+		for _, c := range cands {
+			out[c.Path] = true
+		}
+		return out
+	}
+
+	// scanned through the link, pane reports the resolved path
+	got := paths(Collect(home, []tmux.Pane{
+		{Session: "s", ID: "%1", Command: "claude", Path: filepath.Join(realHome, "dev", "proj")},
+	}))
+	if got[filepath.Join(home, "dev", "proj")] {
+		t.Error("a directory already hosting a pane must not be offered under its other name")
+	}
+	if !got[filepath.Join(home, "dev", "other")] {
+		t.Error("unrelated directories must still be candidates")
+	}
+
+	// and the other way round: scanned directly, pane reports the linked path
+	got = paths(Collect(realHome, []tmux.Pane{
+		{Session: "s", ID: "%1", Command: "claude", Path: filepath.Join(home, "dev", "proj")},
+	}))
+	if got[filepath.Join(realHome, "dev", "proj")] {
+		t.Error("the pane's directory must not be offered under its resolved name either")
 	}
 }

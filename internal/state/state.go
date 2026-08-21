@@ -35,14 +35,22 @@ type PaneState struct {
 	TS    int64 `json:"ts"`
 }
 
-// Dir returns the state directory, honoring XDG_STATE_HOME.
-func Dir() string {
+// Root returns pier's state directory (~/.local/state/pier, honoring
+// XDG_STATE_HOME). Dir — the pane-state files the sidebar prunes — lives
+// under it; anything that must survive that pruning (the update cache) goes
+// directly in Root.
+func Root() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "pier", "panes")
+	return filepath.Join(base, "pier")
+}
+
+// Dir returns the pane-state directory.
+func Dir() string {
+	return filepath.Join(Root(), "panes")
 }
 
 // ForEvent maps a pier hook event name to a pane state ("" = ignore).
