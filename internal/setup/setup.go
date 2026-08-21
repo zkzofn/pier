@@ -41,20 +41,32 @@ func Run(self string) error {
 	fmt.Println(msg)
 
 	// Apply live if a tmux server is already running.
-	if ReloadTmux(tmuxConf) {
-		fmt.Println("tmux: config reloaded on the running server")
+	if msg := ReloadTmux(tmuxConf); msg != "" {
+		fmt.Println(msg)
 	}
 	fmt.Println("done — run `pier` (or your alias) to start")
 	return nil
 }
 
-// ReloadTmux re-sources the config on a running server; false when no
-// server is up or the reload failed.
-func ReloadTmux(tmuxConf string) bool {
+// ReloadTmux re-sources the config on a running server and returns the line
+// to print — "" when no server is up or the reload failed. The message names
+// the socket: `tmux` resolves one from $TMUX / $TMUX_TMPDIR / -L, so a
+// reload can land on a different server than the one you meant, and saying
+// which makes that visible instead of silent.
+func ReloadTmux(tmuxConf string) string {
 	if exec.Command("tmux", "has-session").Run() != nil {
-		return false
+		return ""
 	}
-	return exec.Command("tmux", "source-file", tmuxConf).Run() == nil
+	if exec.Command("tmux", "source-file", tmuxConf).Run() != nil {
+		return ""
+	}
+	msg := "tmux: config reloaded on the running server"
+	if out, err := exec.Command("tmux", "display-message", "-p", "#{socket_path}").Output(); err == nil {
+		if sock := strings.TrimSpace(string(out)); sock != "" {
+			msg += " (" + sock + ")"
+		}
+	}
+	return msg
 }
 
 func tmuxBlock(self string) string {

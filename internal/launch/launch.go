@@ -97,8 +97,8 @@ func Run(version, self string) error {
 	tmuxConf := filepath.Join(home, ".tmux.conf")
 	if msg, err := setup.RefreshTmuxBlock(tmuxConf, self); err == nil && msg != "" {
 		fmt.Println(msg)
-		if setup.ReloadTmux(tmuxConf) {
-			fmt.Println("tmux: config reloaded on the running server")
+		if reloaded := setup.ReloadTmux(tmuxConf); reloaded != "" {
+			fmt.Println(reloaded)
 		}
 	}
 	if os.Getenv("TMUX") != "" {
