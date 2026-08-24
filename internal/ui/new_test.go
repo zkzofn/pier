@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"pier/internal/newsess"
@@ -97,6 +98,43 @@ func TestPickerFilterAppliesToBothGroups(t *testing.T) {
 	m.refilter()
 	if got := kinds(m); !slices.Equal(got, []pickerRowKind{prDir}) || !m.rows[0].cand.Manual || !m.rows[0].cand.NeedsMkdir {
 		t.Errorf("a path query with no match offers the manual candidate: %v", got)
+	}
+}
+
+// ^S must keep its promise on every row: on a running session it opens a
+// fresh terminal session in that session's directory — never a jump. The
+// cursor boots on an open row whenever one exists, so a jump here sent
+// "new session → ^S" ping-ponging between running sessions (v1.0.0).
+func TestPickerShellOnOpenRowOpensTerminalThere(t *testing.T) {
+	var gotName, gotPath, gotCmd string
+	created := false
+	tmuxNewDetached = func(name, path, command string) error {
+		created, gotName, gotPath, gotCmd = true, name, path, command
+		return nil
+	}
+	defer func() { tmuxNewDetached = tmux.NewSessionDetached }()
+
+	m := testPicker(testOpens, testDirs, nil)
+	m.taken = map[string]bool{"suite2": true, "recoder": true}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	fm := model.(pickerModel)
+	if !created {
+		t.Fatalf("^S on an open-session row must create a terminal session, not jump (attach=%q)", fm.attach)
+	}
+	if gotName != "suite2-2" || gotPath != "/Users/j/dev/suite2" || gotCmd != cmdShell {
+		t.Errorf("created %q at %q running %q, want suite2-2 at /Users/j/dev/suite2 running the default shell",
+			gotName, gotPath, gotCmd)
+	}
+	if fm.attach != "suite2-2" {
+		t.Errorf("standalone picker should attach to the new terminal, got %q", fm.attach)
+	}
+}
+
+func TestPickerEnterOnOpenRowJumps(t *testing.T) {
+	m := testPicker(testOpens, testDirs, nil)
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if fm := model.(pickerModel); fm.attach != "suite2" {
+		t.Errorf("Enter on an open row should jump back into it, attach = %q, want suite2", fm.attach)
 	}
 }
 

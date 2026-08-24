@@ -1,9 +1,10 @@
 // The new-session picker: runs inside a tmux popup (`pier new`) or
 // standalone in a plain terminal (bare `pier` outside tmux — the caller
 // attaches to whatever was picked). Running sessions are listed first
-// (Enter jumps back into one), then directories: pick one → the session name
-// follows it; Tab edits the name. Enter starts Claude Code there, ctrl+s a
-// terminal (plain shell).
+// (Enter jumps back into one, ctrl+s opens a terminal session in its
+// directory), then directories: pick one → the session name follows it;
+// Tab edits the name. Enter starts Claude Code there, ctrl+s a terminal
+// (plain shell).
 //
 // Directories where a session died (crash, power loss, OS shutdown) carry a
 // ↻ resume button: →/Enter resumes that conversation, plain Enter starts
@@ -57,6 +58,14 @@ const (
 
 // what a terminal session's main pane runs
 const cmdShell = "" // empty: tmux's default shell
+
+// tmux effects behind function vars: tests intercept them — the real
+// thing talks to a live server.
+var (
+	tmuxNewSwitch   = tmux.NewSessionAndSwitch
+	tmuxNewDetached = tmux.NewSessionDetached
+	tmuxSwitchTo    = tmux.SwitchTo
+)
 
 type pickerRowKind int
 
@@ -242,12 +251,12 @@ func (m *pickerModel) move(delta int) {
 // name back for an attach when standalone.
 func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
 	if m.insideTmux {
-		if err := tmux.NewSessionAndSwitch(name, path, command); err != nil {
+		if err := tmuxNewSwitch(name, path, command); err != nil {
 			m.errMsg = err.Error()
 			return m, nil
 		}
 	} else {
-		if err := tmux.NewSessionDetached(name, path, command); err != nil {
+		if err := tmuxNewDetached(name, path, command); err != nil {
 			m.errMsg = err.Error()
 			return m, nil
 		}
@@ -260,7 +269,7 @@ func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
 // tmux, else hand the name back for the caller to attach.
 func (m pickerModel) jump(session string) (tea.Model, tea.Cmd) {
 	if m.insideTmux {
-		_ = tmux.SwitchTo(session)
+		_ = tmuxSwitchTo(session)
 		return m, tea.Quit
 	}
 	m.attach = session
@@ -279,7 +288,14 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 		}
 		return m.restoreAll()
 	case prOpen:
-		return m.jump(r.open.Session)
+		if !shell {
+			return m.jump(r.open.Session)
+		}
+		// ^S means "terminal at this row's path" on every row — the cursor
+		// boots on an open row, and a jump here instead of a terminal reads
+		// as the key doing nothing (or worse, hopping sessions).
+		name := newsess.Unique(newsess.Sanitize(r.open.Session), m.taken)
+		return m.launch(name, r.open.Path, cmdShell)
 	case prSep:
 		return m, nil
 	}
@@ -340,7 +356,7 @@ func (m pickerModel) restoreAll() (tea.Model, tea.Cmd) {
 			base = filepath.Base(c.CWD)
 		}
 		name := newsess.Unique(newsess.Sanitize(base), m.taken)
-		if err := tmux.NewSessionDetached(name, c.CWD, claude.ResumeCmd(m.telegram, c.SID)); err != nil {
+		if err := tmuxNewDetached(name, c.CWD, claude.ResumeCmd(m.telegram, c.SID)); err != nil {
 			failed = append(failed, filepath.Base(c.CWD))
 			continue
 		}
