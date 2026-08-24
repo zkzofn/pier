@@ -75,6 +75,7 @@ pier
 
 ## 업데이트
 
+
 ```sh
 brew update && brew upgrade zkzofn/tap/pier
 ```
@@ -90,6 +91,8 @@ brew update && brew upgrade zkzofn/tap/pier
 업그레이드 후 설정이 뒤처지는 일도 없다 — pier의 tmux 훅이 도는 순간(= attach나
 세션 전환 때마다) `~/.tmux.conf`의 pier 블록을 최신 내용으로 갱신하고 tmux를
 리로드한다. 이때 블록에 적힌 바이너리 경로는 그대로 유지한다.
+
+버전별로 무엇이 바뀌었는지는 [CHANGELOG.md](CHANGELOG.md)에 정리돼 있다.
 
 <details>
 <summary>수동 설정 — <code>pier setup</code>이 하는 일</summary>

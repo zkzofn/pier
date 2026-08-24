@@ -93,6 +93,8 @@ runs — which is every attach or session switch — it brings its `~/.tmux.conf
 block up to date and reloads tmux, keeping whichever binary path the block
 already points at.
 
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 <details>
 <summary>Manual setup — exactly what <code>pier setup</code> does</summary>
 
