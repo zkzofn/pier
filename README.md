@@ -6,17 +6,17 @@
 See every running Claude Code session at a glance — which worktree and branch each one is on, whether it's working or waiting for you — and jump to any of them with a single click. Your tmux workflow stays exactly as it is, at **8 MB** per sidebar.
 
 ```
-┌──────────────────────┬─────────────────────────────────────┐
-│ Pier — sessions      │                                     │
-│                      │                                     │
-│ suite2 ⎇ feat/nmt    │                                     │
-│  ● Refactor payments │        Claude Code (main pane)      │
-│ suite3 ⎇ dev         │                                     │
-│  ○ suite3            │                                     │
-│ terminal ⎇ -         │                                     │
-│  $ terminal        ◀ │                                     │
-└──────────────────────┴─────────────────────────────────────┘
- [session]                      [~/dev/suite2 ⎇ feat/nmt 13:53]
++----------------------+-------------------------------------+
+| Pier - sessions      |                                     |
+|                      |                                     |
+| suite2 (feat/nmt)    |                                     |
+|  * Refactor payments |       Claude Code (main pane)       |
+| suite3 (dev)         |                                     |
+|  o suite3            |                                     |
+| terminal (-)         |                                     |
+|  $ terminal        < |                                     |
++----------------------+-------------------------------------+
+ [session]                     [~/dev/suite2 (feat/nmt) 13:53]
 ```
 
 - **Sidebar**: every running Claude Code instance across all tmux sessions, grouped by worktree (path + branch). Items show the conversation's AI-generated title, falling back to the tmux session name. Sessions with no Claude Code pane at all are listed too, marked `$` — terminal sessions stay visible and jumpable
