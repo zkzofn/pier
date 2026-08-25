@@ -8,6 +8,19 @@ Versions 0.5.0 – 0.8.0, 0.10.0 and 0.11.0 shipped as commits only — they wer
 never cut as GitHub releases, which is why the Releases page jumps from 0.9.0
 to 1.0.0.
 
+## 1.2.0 — 2026-08-25
+
+- **`^S` on a running session opens a terminal there.** Since 1.0.0 the
+  picker's cursor boots on the first running session, and `^S` on such a row
+  silently jumped instead of creating anything — "new session → `^S`" hopped
+  to a different session on every try. `^S` now means "terminal session at
+  this row's directory" on every row; `Enter` still jumps back in.
+- **The picker explains itself.** The bottom hint follows the cursor and says
+  what `Enter`/`^S` will do to that row (jump · terminal there · resume). The
+  `?` cheatsheet says keys act on the `▸` row and gains the missing `^T`
+  line; both READMEs now spell out that picker keys are pressed inside the
+  popup — no prefix.
+
 ## 1.1.1 — 2026-08-21
 
 - `pier setup`'s reload line now names the tmux socket it applied to
