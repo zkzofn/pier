@@ -18,7 +18,7 @@ import (
 	"pier/internal/ui"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 const usageText = `pier %s — tmux sidebar for Claude Code sessions
 
