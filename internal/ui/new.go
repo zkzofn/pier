@@ -1,10 +1,16 @@
 // The new-session picker: runs inside a tmux popup (`pier new`) or
 // standalone in a plain terminal (bare `pier` outside tmux — the caller
-// attaches to whatever was picked). Running sessions are listed first
-// (Enter jumps back into one, ctrl+s opens a terminal session in its
-// directory), then directories: pick one → the session name follows it;
-// Tab edits the name. Enter starts Claude Code there, ctrl+s a terminal
-// (plain shell).
+// attaches to whatever was picked). Running sessions are listed first —
+// the one the picker was opened from on top, marked ▌ like the sidebar's
+// current row, with the cursor on it — then directories. It creates, it
+// never switches (that is the sidebar's job): Enter on a running session
+// starts another Claude Code session in that session's directory, Enter on
+// a directory starts one there; the name follows the directory (-2, -3, …
+// past taken ones) and Tab edits it. ctrl+s makes a terminal session (plain
+// shell) at the row instead. So prefix+N, Enter is "one more claude here".
+//
+// Standalone there is no sidebar, and the picker is also how you get back
+// into a session: there Enter on a running session attaches to it.
 //
 // Directories where a session died (crash, power loss, OS shutdown) carry a
 // ↻ resume button: →/Enter resumes that conversation, plain Enter starts
@@ -71,7 +77,7 @@ type pickerRowKind int
 
 const (
 	prRestoreAll pickerRowKind = iota // "↻ restore all" action row
-	prOpen                            // a running session — Enter jumps there
+	prOpen                            // a running session — Enter creates there (attaches standalone)
 	prSep                             // blank divider between the groups; the cursor skips it
 	prDir                             // a directory candidate (incl. the manual one)
 )
@@ -122,9 +128,9 @@ func RunNew() (string, error) {
 		}
 		panes = nil // no tmux server yet — nothing is open, that's fine
 	}
-	exclude := ""
+	current := ""
 	if insideTmux {
-		exclude = tmux.CurrentSession() // jumping to where we already are is a no-op
+		current = tmux.CurrentSession() // leads the open rows, marked ▌
 	}
 	casualties := map[string]resume.Casualty{}
 	for _, c := range resume.List(resume.Dir()) {
@@ -134,7 +140,7 @@ func RunNew() (string, error) {
 		home:       home,
 		insideTmux: insideTmux,
 		all:        newsess.Collect(home, panes),
-		opens:      newsess.OpenSessions(panes, exclude),
+		opens:      newsess.OpenSessions(panes, current),
 		states:     state.ReadAll(state.Dir()),
 		taken:      tmux.SessionNames(),
 		casualties: casualties,
@@ -157,8 +163,9 @@ func (m pickerModel) Init() tea.Cmd { return nil }
 
 // refilter applies the query to both groups and rebuilds the rows:
 // [restore all] → open sessions → divider → directories. The cursor lands on
-// the first open session (Enter = back into it), else the first directory —
-// never the restore-all row: a reflexive Enter at boot must not resume every
+// the first open session (inside tmux the current one: Enter = one more
+// claude here; standalone: Enter = attach), else the first directory — never
+// the restore-all row: a reflexive Enter at boot must not resume every
 // casualty at once (it stays one ↑ away).
 func (m *pickerModel) refilter() {
 	m.filtered = newsess.Filter(m.all, m.query)
@@ -266,7 +273,8 @@ func (m pickerModel) launch(name, path, command string) (tea.Model, tea.Cmd) {
 }
 
 // jump leaves the picker for a running session: switch the client inside
-// tmux, else hand the name back for the caller to attach.
+// tmux (restore-all lands on the newest restored session), else hand the
+// name back for the caller to attach (standalone Enter on an open row).
 func (m pickerModel) jump(session string) (tea.Model, tea.Cmd) {
 	if m.insideTmux {
 		_ = tmuxSwitchTo(session)
@@ -274,6 +282,35 @@ func (m pickerModel) jump(session string) (tea.Model, tea.Cmd) {
 	}
 	m.attach = session
 	return m, tea.Quit
+}
+
+// creates reports whether Enter on row r makes a session — so Tab can name
+// it: every directory row, and inside tmux every open row too.
+func (m pickerModel) creates(r *pickerRow) bool {
+	switch r.kind {
+	case prDir:
+		return true
+	case prOpen:
+		return m.insideTmux
+	}
+	return false
+}
+
+// rowPath is where a row's new session lives; baseName what it is named
+// after — the directory's base name for open rows too, so a second agent in
+// ~/dev/suite1 is suite1-2 and a third suite1-3, never suite1-2-2.
+func rowPath(r *pickerRow) string {
+	if r.kind == prOpen {
+		return r.open.Path
+	}
+	return r.cand.Path
+}
+
+func baseName(r *pickerRow) string {
+	if r.kind == prOpen {
+		return newsess.Sanitize(filepath.Base(r.open.Path))
+	}
+	return r.cand.Name
 }
 
 func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
@@ -287,21 +324,20 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.restoreAll()
-	case prOpen:
-		if !shell {
-			return m.jump(r.open.Session)
-		}
-		// ^S means "terminal at this row's path" on every row — the cursor
-		// boots on an open row, and a jump here instead of a terminal reads
-		// as the key doing nothing (or worse, hopping sessions).
-		name := newsess.Unique(newsess.Sanitize(r.open.Session), m.taken)
-		return m.launch(name, r.open.Path, cmdShell)
 	case prSep:
 		return m, nil
+	case prOpen:
+		if !shell && !m.insideTmux {
+			// Standalone, the picker is also how you get back into a
+			// session: Enter attaches. Inside tmux the sidebar does that,
+			// and this popup is "new session" — Enter creates, below.
+			return m.jump(r.open.Session)
+		}
 	}
-	cand := r.cand
+	// A place to create in: an open row (its session's directory) or a
+	// directory row. ^S means "terminal at this row's path" on every row.
+	path, name := rowPath(r), baseName(r)
 	command := claude.Cmd(m.telegram)
-	name := cand.Name
 	resumeSID := ""
 	if !shell && m.onResume {
 		// The ↻ button: continue the dead conversation, under its old
@@ -322,13 +358,13 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 	}
 	name = newsess.Unique(newsess.Sanitize(name), m.taken)
 
-	if cand.NeedsMkdir {
-		if err := os.MkdirAll(cand.Path, 0o755); err != nil {
+	if r.kind == prDir && r.cand.NeedsMkdir {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			m.errMsg = "mkdir: " + err.Error()
 			return m, nil
 		}
 	}
-	mm, cmd := m.launch(name, cand.Path, command)
+	mm, cmd := m.launch(name, path, command)
 	if resumeSID != "" && mm.(pickerModel).errMsg == "" {
 		// Only an actual resume retires the record; starting blank (plain
 		// Enter) leaves the offer around until it expires.
@@ -442,10 +478,10 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left":
 			m.onResume = false
 		case "tab":
-			if r := m.rowAt(m.cursor); r != nil && r.kind == prDir {
+			if r := m.rowAt(m.cursor); r != nil && m.creates(r) {
 				m.editing = true
 				m.onResume = false
-				m.name = newsess.Unique(r.cand.Name, m.taken)
+				m.name = newsess.Unique(baseName(r), m.taken)
 			}
 		case "up", "ctrl+p":
 			m.move(-1)
@@ -523,8 +559,12 @@ func (m pickerModel) hint() string {
 		return "Esc: close"
 	case r.kind == prRestoreAll:
 		return "Enter: restore all · Esc"
-	case r.kind == prOpen:
+	case r.kind == prOpen && !m.insideTmux:
 		return "Enter: jump · ^S: terminal there"
+	case r.kind == prOpen && r.open.Here:
+		return "Enter: new claude here · ^S: terminal here"
+	case r.kind == prOpen:
+		return "Enter: new claude there · ^S: terminal there"
 	}
 	if _, ok := m.casualtyFor(r); ok {
 		if m.onResume {
@@ -550,8 +590,8 @@ func (m pickerModel) View() string {
 
 	if m.editing {
 		path := ""
-		if r := m.rowAt(m.cursor); r != nil && r.kind == prDir {
-			path = discover.ShortPath(r.cand.Path)
+		if r := m.rowAt(m.cursor); r != nil && m.creates(r) {
+			path = discover.ShortPath(rowPath(r))
 		}
 		line(" " + styleHint.Render("path: "+path))
 		line(" " + stylePrompt.Render("name: ") + m.name + "█")
@@ -587,11 +627,19 @@ func (m pickerModel) View() string {
 			}
 		case prOpen:
 			// Styles are applied per segment, not nested: the icon's color
-			// reset would otherwise cut the cursor's bold short.
+			// reset would otherwise cut the cursor's bold short. The current
+			// session wears the sidebar's marks: ▌ and styleCurrent on its
+			// name — which stays put under the cursor, where ▸ takes over.
 			_, icon := paneIcon(r.open.Pane, m.states)
 			prefix, name := "  ", r.open.Session
+			if r.open.Here {
+				prefix, name = "▌ ", styleCurrent.Render(name)
+			}
 			if cur {
-				prefix, name = "▸ ", stylePick.Render(name)
+				prefix = "▸ "
+				if !r.open.Here {
+					name = stylePick.Render(name)
+				}
 			}
 			line(prefix + icon + " " + name + "  " + styleHint.Render(discover.ShortPath(r.open.Path)))
 		case prSep:

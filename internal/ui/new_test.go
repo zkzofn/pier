@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"pier/internal/claude"
 	"pier/internal/newsess"
 	"pier/internal/resume"
 	"pier/internal/state"
@@ -24,6 +25,11 @@ var (
 		{Path: "/Users/j/dev/pier", Name: "pier"},
 		{Path: "/Users/j/dev/suite3", Name: "suite3"},
 	}
+	// inside tmux the picker was opened from session "me": it leads the open
+	// rows, flagged Here
+	testOpensHere = append([]newsess.Open{
+		{Session: "me", Path: "/Users/j/dev/me", Pane: tmux.Pane{ID: "%3", Command: "claude"}, Here: true},
+	}, testOpens...)
 	testCasualties = map[string]resume.Casualty{
 		"/Users/j/dev/suite3": {SID: "sid-3", CWD: "/Users/j/dev/suite3", LastActive: time.Now()},
 	}
@@ -130,11 +136,13 @@ func TestPickerShellOnOpenRowOpensTerminalThere(t *testing.T) {
 	}
 }
 
-func TestPickerEnterOnOpenRowJumps(t *testing.T) {
+// Standalone (outside tmux) the picker is also how you get back into a
+// session, so Enter on an open row attaches instead of creating.
+func TestPickerEnterOnOpenRowStandaloneAttaches(t *testing.T) {
 	m := testPicker(testOpens, testDirs, nil)
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if fm := model.(pickerModel); fm.attach != "suite2" {
-		t.Errorf("Enter on an open row should jump back into it, attach = %q, want suite2", fm.attach)
+		t.Errorf("Enter on an open row should attach to it, attach = %q, want suite2", fm.attach)
 	}
 }
 
@@ -203,5 +211,136 @@ func TestPickerViewFitsAndShowsOpenRows(t *testing.T) {
 	}
 	if !strings.Contains(v, "^S: terminal") {
 		t.Errorf("hint should say terminal:\n%s", v)
+	}
+}
+
+// Inside tmux the picker is a new-session tool through and through: the
+// session it was opened from leads the open rows (marked like the sidebar's
+// current row), the other running sessions follow without a gap, and the
+// cursor boots on the current one — prefix+N, Enter is "one more claude here".
+func TestPickerCurrentSessionLeadsOpenRowsAndBootsTheCursor(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, testCasualties)
+	want := []pickerRowKind{prRestoreAll, prOpen, prOpen, prOpen, prSep, prDir, prDir}
+	if got := kinds(m); !slices.Equal(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	if !m.rows[1].open.Here || m.rows[1].open.Session != "me" || m.rows[2].open.Session != "suite2" {
+		t.Errorf("the current session leads, the others follow without a gap: %+v", m.rows[1:4])
+	}
+	if m.cursor != 1 {
+		t.Errorf("cursor = %d, want the current session (1)", m.cursor)
+	}
+}
+
+// Enter on an open row inside tmux starts another Claude Code session in
+// that session's directory — never a switch (the sidebar does that). Names
+// follow the directory, with the usual -2/-3 suffix past taken ones, so a
+// third agent is "-3", not "-2-2".
+func TestPickerEnterOnOpenRowInsideTmuxStartsAnotherClaudeThere(t *testing.T) {
+	var gotName, gotPath, gotCmd string
+	tmuxNewSwitch = func(name, path, command string) error {
+		gotName, gotPath, gotCmd = name, path, command
+		return nil
+	}
+	tmuxSwitchTo = func(string) error {
+		t.Fatal("the picker must not switch sessions inside tmux")
+		return nil
+	}
+	defer func() { tmuxNewSwitch, tmuxSwitchTo = tmux.NewSessionAndSwitch, tmux.SwitchTo }()
+
+	m := testPicker(testOpensHere, testDirs, nil)
+	m.insideTmux = true
+	m.taken = map[string]bool{"me": true, "suite2": true, "recoder": true}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // cursor boots on "me"
+	if gotName != "me-2" || gotPath != "/Users/j/dev/me" || gotCmd != claude.Cmd(false) {
+		t.Errorf("created %q at %q running %q, want me-2 at /Users/j/dev/me running claude", gotName, gotPath, gotCmd)
+	}
+	if fm := model.(pickerModel); fm.attach != "" {
+		t.Errorf("inside tmux nothing is handed back to attach, got %q", fm.attach)
+	}
+
+	m.cursor = 1 // suite2
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if gotName != "suite2-2" || gotPath != "/Users/j/dev/suite2" {
+		t.Errorf("another open row: created %q at %q, want suite2-2 at /Users/j/dev/suite2", gotName, gotPath)
+	}
+
+	// on a second agent's row ("suite1-2" at ~/dev/suite1) the third is suite1-3
+	m = testPicker([]newsess.Open{{Session: "suite1-2", Path: "/Users/j/dev/suite1", Here: true}}, testDirs, nil)
+	m.insideTmux = true
+	m.taken = map[string]bool{"suite1": true, "suite1-2": true}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if gotName != "suite1-3" {
+		t.Errorf("names follow the directory: got %q, want suite1-3", gotName)
+	}
+}
+
+// Tab names the session Enter/^S will create — on open rows too, now that
+// they create. Standalone, where Enter attaches, Tab stays a no-op there.
+func TestPickerTabOnOpenRowInsideTmuxEditsTheName(t *testing.T) {
+	var gotName, gotPath string
+	tmuxNewSwitch = func(name, path, command string) error {
+		gotName, gotPath = name, path
+		return nil
+	}
+	defer func() { tmuxNewSwitch = tmux.NewSessionAndSwitch }()
+
+	m := testPicker(testOpensHere, testDirs, nil)
+	m.insideTmux = true
+	m.taken = map[string]bool{"me": true}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = model.(pickerModel)
+	if !m.editing || m.name != "me-2" {
+		t.Fatalf("Tab on the current row should propose me-2, got editing=%v name=%q", m.editing, m.name)
+	}
+	if v := m.View(); !strings.Contains(v, "path: /Users/j/dev/me") {
+		t.Errorf("the editor shows the open row's directory:\n%s", v)
+	}
+	m.name = "me-review"
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if gotName != "me-review" || gotPath != "/Users/j/dev/me" {
+		t.Errorf("created %q at %q, want me-review at /Users/j/dev/me", gotName, gotPath)
+	}
+
+	s := testPicker(testOpens, testDirs, nil) // standalone
+	if model, _ := s.Update(tea.KeyMsg{Type: tea.KeyTab}); model.(pickerModel).editing {
+		t.Error("standalone, Enter attaches — there is no name to edit on an open row")
+	}
+}
+
+func TestPickerCurrentOpenRowIsMarkedLikeTheSidebar(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, nil) // cursor on "me"
+	v := m.View()
+	if !strings.Contains(v, "▸ · me  /Users/j/dev/me") {
+		t.Errorf("under the cursor the current row reads like any ▸ row:\n%s", v)
+	}
+	m.cursor = 1 // suite2
+	v = m.View()
+	if !strings.Contains(v, "▌ · me  /Users/j/dev/me") {
+		t.Errorf("off the cursor the current row carries the sidebar's ▌ marker:\n%s", v)
+	}
+	if strings.Contains(v, "▌ ● suite2") || strings.Contains(v, "▌ $ recoder") {
+		t.Errorf("only the current session is marked:\n%s", v)
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 45 {
+			t.Errorf("line %d cols wide, over 45: %q", w, line)
+		}
+	}
+}
+
+func TestPickerHintOnOpenRowsInsideTmux(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, nil)
+	m.insideTmux = true
+	if v := m.View(); !strings.Contains(v, "Enter: new claude here · ^S: terminal here") {
+		t.Errorf("current row: hint says Enter creates here:\n%s", v)
+	}
+	m.cursor = 1
+	if v := m.View(); !strings.Contains(v, "Enter: new claude there · ^S: terminal there") {
+		t.Errorf("another open row: hint says Enter creates there, not jumps:\n%s", v)
+	}
+	m.insideTmux = false
+	if v := m.View(); !strings.Contains(v, "Enter: jump · ^S: terminal there") {
+		t.Errorf("standalone: Enter still jumps (attaches):\n%s", v)
 	}
 }

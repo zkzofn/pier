@@ -84,25 +84,28 @@ type Open struct {
 	Session string
 	Path    string    // the representative pane's working directory
 	Pane    tmux.Pane // representative pane — the sidebar's icon rules apply to it
+	Here    bool      // the session the picker was opened from
 }
 
 // OpenSessions lists running sessions in sidebar order (discover.SessionOrder:
 // worktree path, then session name), each with its representative pane.
-// Sessions holding only a sidebar pane are skipped, as is `exclude` — the
-// current session when the picker runs inside tmux, where jumping there is a
-// no-op.
-func OpenSessions(panes []tmux.Pane, exclude string) []Open {
+// Sessions holding only a sidebar pane are skipped. `current` — the session
+// the picker was opened from; "" standalone — moves to the front, flagged
+// Here, so the picker boots with the cursor on it.
+func OpenSessions(panes []tmux.Pane, current string) []Open {
 	groups := discover.Group(panes, func(string) string { return "" })
 	var out []Open
 	for _, s := range discover.SessionOrder(groups) {
-		if s == exclude {
-			continue
-		}
 		rep, ok := discover.Representative(panes, s)
 		if !ok {
 			continue
 		}
-		out = append(out, Open{Session: s, Path: rep.Path, Pane: rep})
+		o := Open{Session: s, Path: rep.Path, Pane: rep, Here: s == current}
+		if o.Here {
+			out = append([]Open{o}, out...)
+		} else {
+			out = append(out, o)
+		}
 	}
 	return out
 }

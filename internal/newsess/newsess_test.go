@@ -3,6 +3,7 @@ package newsess
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"pier/internal/tmux"
@@ -47,15 +48,36 @@ func TestOpenSessions(t *testing.T) {
 		{Session: "lonely", ID: "%4", Command: "pier", Path: "/Users/j", Sidebar: true},
 		{Session: "me", ID: "%5", Command: "claude", Path: "/Users/j/dev/me", WindowActive: true, PaneActive: true},
 	}
+	names := func(opens []Open) []string {
+		var out []string
+		for _, o := range opens {
+			out = append(out, o.Session)
+		}
+		return out
+	}
+
+	// the session the picker was opened from leads, flagged Here; the rest
+	// keep sidebar (path) order
 	got := OpenSessions(panes, "me")
-	if len(got) != 2 || got[0].Session != "alpha" || got[1].Session != "zeta" {
-		t.Fatalf("want [alpha zeta] in sidebar (path) order, got %+v", got)
+	if want := []string{"me", "alpha", "zeta"}; !slices.Equal(names(got), want) {
+		t.Fatalf("want %v, got %+v", want, got)
 	}
-	if got[0].Path != "/Users/j/dev/alpha" || got[0].Pane.ID != "%2" {
-		t.Errorf("alpha should carry its representative pane: %+v", got[0])
+	if !got[0].Here || got[1].Here || got[2].Here {
+		t.Errorf("only the current session is Here: %+v", got)
 	}
-	if got := OpenSessions(panes, ""); len(got) != 3 {
-		t.Errorf("without an exclusion all three real sessions show: %+v", got)
+	if got[1].Path != "/Users/j/dev/alpha" || got[1].Pane.ID != "%2" {
+		t.Errorf("alpha should carry its representative pane: %+v", got[1])
+	}
+
+	// no current session (standalone): plain sidebar order, nothing marked
+	got = OpenSessions(panes, "")
+	if want := []string{"alpha", "me", "zeta"}; !slices.Equal(names(got), want) || got[0].Here || got[1].Here || got[2].Here {
+		t.Errorf("without a current session: want %v, none Here, got %+v", want, got)
+	}
+
+	// a current session holding only a sidebar pane isn't a row at all
+	if got := OpenSessions(panes, "lonely"); !slices.Equal(names(got), []string{"alpha", "me", "zeta"}) {
+		t.Errorf("sidebar-only current session: want [alpha me zeta], got %+v", got)
 	}
 	if got := OpenSessions(nil, ""); len(got) != 0 {
 		t.Errorf("no panes -> no sessions, got %+v", got)

@@ -65,7 +65,7 @@ func keysContent() string {
 		"",
 		" " + section("picker") + dim("  (keys act on the ▸ row)"),
 		"  " + key("type") + "        filter dirs, or a ~/ path",
-		"  " + key("Enter") + "       claude session · jump when open",
+		"  " + key("Enter") + "       claude session at the row",
 		"  " + key("^S") + "          terminal session at the row",
 		"  " + key("Tab") + "         edit the session name",
 		"  " + key("^T") + "          start with telegram attached",
