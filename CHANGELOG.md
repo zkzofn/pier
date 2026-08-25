@@ -8,6 +8,23 @@ Versions 0.5.0 – 0.8.0, 0.10.0 and 0.11.0 shipped as commits only — they wer
 never cut as GitHub releases, which is why the Releases page jumps from 0.9.0
 to 1.0.0.
 
+## 1.3.0 — 2026-08-25
+
+- **The picker creates, it never switches.** Inside tmux the new-session
+  picker now lists every running session — the one you are in on top, marked
+  `▌`, with the cursor on it — and `Enter` on a running session starts
+  another Claude Code session in that session's directory instead of jumping
+  back into it (jumping is the sidebar's job). `^S` still opens a terminal
+  there, and `Tab` now names the new session on running-session rows too.
+  So `prefix+N` `Enter` is "one more Claude Code here".
+- Names follow the directory on every row, `-2`, `-3`, … past taken ones: a
+  third agent in `~/dev/suite1` is `suite1-3`, never `suite1-2-2`.
+- Fixed: since 1.0.0 the picker dropped the session it was opened from, which
+  left no row for its directory at all — no way to open a terminal or a
+  second agent where you already are.
+- Outside tmux (bare `pier`) `Enter` on a running session still attaches to
+  it: without a sidebar, that is the way back into a session.
+
 ## 1.2.0 — 2026-08-25
 
 - **`^S` on a running session opens a terminal there.** Since 1.0.0 the
