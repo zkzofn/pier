@@ -155,6 +155,38 @@ func TestPickerMoveSkipsSeparator(t *testing.T) {
 	}
 }
 
+// The bottom hint teaches the picker's one non-obvious rule: keys act on
+// the ▸ row. It must say what Enter/^S do to THAT row — a fixed line
+// claimed "Enter: create" while the cursor sat on a running session.
+func TestPickerHintFollowsCursorRow(t *testing.T) {
+	m := testPicker(testOpens, testDirs, testCasualties)
+	// rows: [restore-all, open suite2, open recoder, sep, dir pier, dir suite3]
+	if v := m.View(); !strings.Contains(v, "Enter: jump · ^S: terminal there") {
+		t.Errorf("open row: hint must explain jump/terminal-there:\n%s", v)
+	}
+	m.cursor = 4
+	if v := m.View(); !strings.Contains(v, "Enter: claude · ^S: terminal · Tab: name") {
+		t.Errorf("dir row: hint must explain claude/terminal:\n%s", v)
+	}
+	m.cursor = 5 // suite3 carries a casualty
+	if v := m.View(); !strings.Contains(v, "→ resume") {
+		t.Errorf("casualty row: hint must offer the resume arrow:\n%s", v)
+	}
+	m.onResume = true
+	if v := m.View(); !strings.Contains(v, "Enter: resume") {
+		t.Errorf("focused ↻ button: hint must say Enter resumes:\n%s", v)
+	}
+	m.onResume = false
+	m.cursor = 0
+	if v := m.View(); !strings.Contains(v, "Enter: restore all") {
+		t.Errorf("restore-all row: hint must say what Enter does:\n%s", v)
+	}
+	m.editing = true
+	if v := m.View(); !strings.Contains(v, "Enter: claude") {
+		t.Errorf("name editor: hint should match the dir-row wording:\n%s", v)
+	}
+}
+
 func TestPickerViewFitsAndShowsOpenRows(t *testing.T) {
 	m := testPicker(testOpens, testDirs, nil)
 	v := m.View()

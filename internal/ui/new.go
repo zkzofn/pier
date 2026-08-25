@@ -513,6 +513,28 @@ func (m pickerModel) dirLine(r *pickerRow, cur bool, w uint) string {
 	return prefix + label
 }
 
+// hint names what Enter and ^S will do to the ▸ row. A fixed line taught
+// the wrong thing whenever the cursor sat on a running session — there
+// Enter jumps, it creates nothing.
+func (m pickerModel) hint() string {
+	r := m.rowAt(m.cursor)
+	switch {
+	case r == nil:
+		return "Esc: close"
+	case r.kind == prRestoreAll:
+		return "Enter: restore all · Esc"
+	case r.kind == prOpen:
+		return "Enter: jump · ^S: terminal there"
+	}
+	if _, ok := m.casualtyFor(r); ok {
+		if m.onResume {
+			return "Enter: resume this conversation"
+		}
+		return "Enter: new · → resume · ^S: terminal"
+	}
+	return "Enter: claude · ^S: terminal · Tab: name"
+}
+
 func (m pickerModel) View() string {
 	w := uint(m.width - 1) // ambiguous-width guard, same as the sidebar
 	var b strings.Builder
@@ -537,7 +559,7 @@ func (m pickerModel) View() string {
 		if m.errMsg != "" {
 			line(" " + styleNewErr.Render(m.errMsg))
 		}
-		line(" " + styleHint.Render("Enter: create · ^S: terminal · Esc: back"))
+		line(" " + styleHint.Render("Enter: claude · ^S: terminal · Esc: back"))
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
@@ -585,10 +607,8 @@ func (m pickerModel) View() string {
 	line("")
 	if m.errMsg != "" {
 		line(" " + styleNewErr.Render(m.errMsg))
-	} else if len(m.casualties) > 0 {
-		line(" " + styleHint.Render("Enter: new · → resume · ^S · ^T tg · Esc"))
 	} else {
-		line(" " + styleHint.Render("Enter: create · ^S: terminal · Tab: name"))
+		line(" " + styleHint.Render(m.hint()))
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }

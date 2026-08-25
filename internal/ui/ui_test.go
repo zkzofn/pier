@@ -28,9 +28,9 @@ func TestKeysContentFitsPopup(t *testing.T) {
 			t.Errorf("line %d cols wide, over 45: %q", w, line)
 		}
 	}
-	// The popup is 28 tall (2 for the border): the content must fit too.
-	if n := strings.Count(keysContent(), "\n") + 1; n > 26 {
-		t.Errorf("keys content is %d lines, over 26", n)
+	// The popup is 29 tall (2 for the border): the content must fit too.
+	if n := strings.Count(keysContent(), "\n") + 1; n > 27 {
+		t.Errorf("keys content is %d lines, over 27", n)
 	}
 }
 
@@ -80,6 +80,18 @@ func TestKeysContentSaysTerminal(t *testing.T) {
 	}
 	if !strings.Contains(c, "terminal session") {
 		t.Error("cheatsheet should describe ^S / $ as a terminal session")
+	}
+}
+
+// The cheatsheet must teach the picker's mental model — keys live inside
+// the popup and act on the ▸ row — and cover ^T, or nobody finds it.
+func TestKeysContentTeachesRowModel(t *testing.T) {
+	c := keysContent()
+	if !strings.Contains(c, "keys act on the ▸ row") {
+		t.Error("picker section should say keys act on the ▸ row")
+	}
+	if !strings.Contains(c, "^T") {
+		t.Error("picker section should list ^T (telegram)")
 	}
 }
 

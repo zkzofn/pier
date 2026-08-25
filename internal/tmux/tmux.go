@@ -284,7 +284,7 @@ func OpenNewPopup(self, session string) error {
 // OpenKeysPopup opens the keybinding cheatsheet popup. Keep the geometry in
 // sync with ui.keysContent.
 func OpenKeysPopup(self, session string) error {
-	return openPopup(session, 46, 28, " Pier keys ", self+" keys")
+	return openPopup(session, 46, 29, " Pier keys ", self+" keys")
 }
 
 // sidebarPaneIn returns the pane id of an existing sidebar in the session.
