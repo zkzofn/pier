@@ -1,0 +1,111 @@
+# Cut a release from a version tag. A release is: bump `version` in main.go,
+# add the CHANGELOG section, commit, then `git tag vX.Y.Z && git push origin
+# main vX.Y.Z` — this workflow does the rest: verify tag ↔ main.go ↔
+# CHANGELOG agree, run the tests, build the darwin tarballs, publish the
+# GitHub Release (notes = the CHANGELOG section), and point homebrew-tap's
+# formula at it via the TAP_DEPLOY_KEY secret (a write deploy key on that
+# repo).
+#
+# A manual run (workflow_dispatch) builds and verifies but publishes nothing —
+# use it to rehearse changes to this file.
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER="$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)"
+            echo "dry run for v$VER — nothing will be published"
+          fi
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Tag must match main.go and CHANGELOG
+        run: |
+          VER="${{ steps.ver.outputs.ver }}"
+          grep -qx "const version = \"$VER\"" main.go || {
+            echo "main.go says: $(grep 'const version' main.go) — tag says $VER"
+            exit 1
+          }
+          awk -v ver="$VER" '$0 ~ "^## " ver " " {f=1; next} /^## /{f=0} f' CHANGELOG.md > /tmp/notes.md
+          [ -s /tmp/notes.md ] || { echo "CHANGELOG.md has no \"## $VER\" section"; exit 1; }
+
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build tarballs
+        run: |
+          VER="${{ steps.ver.outputs.ver }}"
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -o "dist/$arch/pier" .
+            tar -czf "dist/pier_v${VER}_darwin_${arch}.tar.gz" -C "dist/$arch" pier
+          done
+          shasum -a 256 dist/pier_v*.tar.gz
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.ver.outputs.ver }}"
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            # Re-run after a partial failure: the release (and its shas) stand;
+            # never overwrite assets a formula may already reference.
+            echo "release v$VER already exists — leaving its assets alone"
+            exit 0
+          fi
+          gh release create "v$VER" dist/pier_v"$VER"_darwin_*.tar.gz \
+            --title "v$VER" --notes-file /tmp/notes.md
+
+      - name: Update homebrew-tap
+        if: github.event_name == 'push'
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          VER="${{ steps.ver.outputs.ver }}"
+          ARM_SHA=$(shasum -a 256 "dist/pier_v${VER}_darwin_arm64.tar.gz" | cut -d' ' -f1)
+          AMD_SHA=$(shasum -a 256 "dist/pier_v${VER}_darwin_amd64.tar.gz" | cut -d' ' -f1)
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$HOME/.ssh/tap_key"
+          chmod 600 "$HOME/.ssh/tap_key"
+          ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap_key -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git clone --depth 1 git@github.com:zkzofn/homebrew-tap.git /tmp/tap
+          awk -v ver="$VER" -v arm="$ARM_SHA" -v amd="$AMD_SHA" '
+            /version "/ { sub(/version "[^"]*"/, "version \"" ver "\"") }
+            /darwin_arm64\.tar\.gz"/ { sub(/v[0-9][^\/]*\/pier_v[0-9][^_]*_darwin/, "v" ver "/pier_v" ver "_darwin"); pending = arm }
+            /darwin_amd64\.tar\.gz"/ { sub(/v[0-9][^\/]*\/pier_v[0-9][^_]*_darwin/, "v" ver "/pier_v" ver "_darwin"); pending = amd }
+            /sha256 "/ && pending { sub(/sha256 "[^"]*"/, "sha256 \"" pending "\""); pending = "" }
+            { print }
+          ' /tmp/tap/Formula/pier.rb > /tmp/pier.rb
+          mv /tmp/pier.rb /tmp/tap/Formula/pier.rb
+          cd /tmp/tap
+          if git diff --quiet; then
+            echo "formula already at $VER — nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/pier.rb
+          git commit -m "pier $VER"
+          git push origin main
