@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -334,6 +335,8 @@ func TestPickerCurrentOpenRowIsMarkedLikeTheSidebar(t *testing.T) {
 // is noise — and spelled out: "tg" told nobody anything. The key itself is
 // taught on the keys line, from the first frame.
 func TestPickerTelegramBadgeOnlyWhenOn(t *testing.T) {
+	telegramPreflight = func(string) error { return nil }
+	defer func() { telegramPreflight = claude.TelegramPreflight }()
 	m := testPicker(testOpensHere, testDirs, testCasualties)
 	m.insideTmux = true
 	head := func(v string) string { return strings.SplitN(v, "\n", 2)[0] }
@@ -419,5 +422,72 @@ func TestPickerHintOnOpenRowsInsideTmux(t *testing.T) {
 	m.insideTmux = false
 	if v := m.View(); !strings.Contains(v, "Enter: jump · ^S: terminal there") {
 		t.Errorf("standalone: Enter still jumps (attaches):\n%s", v)
+	}
+}
+
+// ^T asks before it promises: with the plugin off or no bot token, Claude
+// Code would start a session that silently lacks telegram, so the toggle
+// stays off and the error line names the fix. Enter and restore-all run
+// the same check — nothing launches into such a session either. ^S opens
+// a plain shell and never needed telegram.
+func TestPickerTelegramPreflight(t *testing.T) {
+	noToken := errors.New("no telegram token · /telegram:configure")
+	telegramPreflight = func(string) error { return noToken }
+	launched := 0
+	tmuxNewSwitch = func(name, path, command string) error { launched++; return nil }
+	tmuxNewDetached = func(name, path, command string) error { launched++; return nil }
+	tmuxSwitchTo = func(string) error { return nil }
+	defer func() {
+		telegramPreflight = claude.TelegramPreflight
+		tmuxNewSwitch, tmuxNewDetached, tmuxSwitchTo = tmux.NewSessionAndSwitch, tmux.NewSessionDetached, tmux.SwitchTo
+	}()
+
+	m := testPicker(testOpensHere, testDirs, testCasualties)
+	m.insideTmux = true
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = mm.(pickerModel)
+	v := m.View()
+	if m.telegram || !strings.Contains(v, noToken.Error()) || strings.Contains(v, "telegram ✓") {
+		t.Errorf("not ready: ^T stays off and the error line says why:\n%s", v)
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 45 {
+			t.Errorf("line %d cols wide, over 45: %q", w, line)
+		}
+	}
+
+	// ready now: ^T goes on and the error clears
+	telegramPreflight = func(string) error { return nil }
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = mm.(pickerModel)
+	if !m.telegram || m.errMsg != "" {
+		t.Fatalf("ready: ^T turns on with no error; got on=%v err=%q", m.telegram, m.errMsg)
+	}
+
+	// the token vanished between the toggle and Enter: nothing launches
+	telegramPreflight = func(string) error { return noToken }
+	m.cursor = 5 // dir row: pier
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mm.(pickerModel)
+	if launched != 0 || m.errMsg != noToken.Error() {
+		t.Errorf("Enter with a failing preflight: launched=%d err=%q", launched, m.errMsg)
+	}
+	m.cursor = 0 // restore all
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = mm.(pickerModel)
+	if launched != 0 || m.errMsg != noToken.Error() {
+		t.Errorf("restore-all with a failing preflight: launched=%d err=%q", launched, m.errMsg)
+	}
+	m.cursor = 5
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if launched != 1 {
+		t.Errorf("^S is a plain shell, the preflight must not block it: launched=%d", launched)
+	}
+
+	// ^T off again: flag off, error gone
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = mm.(pickerModel)
+	if m.telegram || m.errMsg != "" {
+		t.Errorf("^T off: flag off and error cleared; got on=%v err=%q", m.telegram, m.errMsg)
 	}
 }

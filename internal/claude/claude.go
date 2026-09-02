@@ -7,7 +7,11 @@ package claude
 // Bin is the Claude Code executable name looked up on PATH.
 const Bin = "claude"
 
-const telegramArgs = " --channels plugin:telegram@claude-plugins-official"
+// telegramPlugin is the channel plugin's id in Claude Code: enabledPlugins
+// key in settings.json, --channels target.
+const telegramPlugin = "telegram@claude-plugins-official"
+
+const telegramArgs = " --channels plugin:" + telegramPlugin
 
 // Cmd is the shell command a new Claude Code pane runs; telegram attaches
 // the telegram channel plugin (the picker's ^T).

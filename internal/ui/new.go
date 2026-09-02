@@ -65,12 +65,13 @@ const (
 // what a terminal session's main pane runs
 const cmdShell = "" // empty: tmux's default shell
 
-// tmux effects behind function vars: tests intercept them — the real
-// thing talks to a live server.
+// tmux effects and the ^T preflight behind function vars: tests intercept
+// them — the real things talk to a live server and read ~/.claude.
 var (
-	tmuxNewSwitch   = tmux.NewSessionAndSwitch
-	tmuxNewDetached = tmux.NewSessionDetached
-	tmuxSwitchTo    = tmux.SwitchTo
+	tmuxNewSwitch     = tmux.NewSessionAndSwitch
+	tmuxNewDetached   = tmux.NewSessionDetached
+	tmuxSwitchTo      = tmux.SwitchTo
+	telegramPreflight = claude.TelegramPreflight
 )
 
 type pickerRowKind int
@@ -313,6 +314,21 @@ func baseName(r *pickerRow) string {
 	return r.cand.Name
 }
 
+// telegramReady is the ^T preflight at launch time: the toggle already
+// asked, but a token or plugin can vanish in between, and a session that
+// silently lacks telegram is exactly what ^T exists to avoid. Sets errMsg
+// and reports false when not ready; always true with ^T off.
+func (m *pickerModel) telegramReady() bool {
+	if !m.telegram {
+		return true
+	}
+	if err := telegramPreflight(m.home); err != nil {
+		m.errMsg = err.Error()
+		return false
+	}
+	return true
+}
+
 func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 	r := m.rowAt(i)
 	if r == nil {
@@ -337,6 +353,9 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 	// A place to create in: an open row (its session's directory) or a
 	// directory row. ^S means "terminal at this row's path" on every row.
 	path, name := rowPath(r), baseName(r)
+	if !shell && !m.telegramReady() {
+		return m, nil
+	}
 	command := claude.Cmd(m.telegram)
 	resumeSID := ""
 	if !shell && m.onResume {
@@ -377,6 +396,9 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 // recorded, else the directory name) and jumps to the most recent one.
 // Failed ones keep their records and show up again next time.
 func (m pickerModel) restoreAll() (tea.Model, tea.Cmd) {
+	if !m.telegramReady() {
+		return m, nil
+	}
 	cs := make([]resume.Casualty, 0, len(m.casualties))
 	for _, c := range m.casualties {
 		cs = append(cs, c)
@@ -470,6 +492,16 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s":
 			return m.confirm(m.cursor, true)
 		case "ctrl+t":
+			// Ask before the badge goes on: Claude Code starts fine
+			// without the plugin or its token and just never attaches
+			// the channel, so this is where the failure can be seen.
+			m.errMsg = ""
+			if !m.telegram {
+				if err := telegramPreflight(m.home); err != nil {
+					m.errMsg = err.Error()
+					break
+				}
+			}
 			m.telegram = !m.telegram
 		case "right":
 			if _, ok := m.casualtyFor(m.rowAt(m.cursor)); ok {
