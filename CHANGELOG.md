@@ -8,6 +8,26 @@ Versions 0.5.0 – 0.8.0, 0.10.0 and 0.11.0 shipped as commits only — they wer
 never cut as GitHub releases, which is why the Releases page jumps from 0.9.0
 to 1.0.0.
 
+## 1.3.1 — 2026-09-02
+
+- **`^T` checks before it promises.** Claude Code starts fine with
+  `--channels plugin:telegram…` when the plugin is off or its bot token is
+  missing — the session just never gets the channel (with no token the
+  plugin's MCP server exits within a second; only `/mcp` shows it). The
+  picker now keeps `^T` off in either case and says what's missing:
+  `telegram plugin not enabled · /plugin` or `no telegram token ·
+  /telegram:configure`. Enter and restore-all run the same check.
+- The picker's hints sit on two lines: the first names what `Enter` and
+  `^S` do on the `▸` row, the second the keys that don't depend on it —
+  `^T: telegram`, `Tab: name` (only where there is a session to name),
+  `Esc: close`. The header shows `telegram ✓` only while it's on; the
+  `tg` abbreviation is gone.
+- The new-session popup grew from 18 to 22 rows (17 list rows instead of
+  13). `pier ensure` refreshes the tmux block on the next attach, as usual.
+- Known, from the telegram plugin (0.0.7): one Claude Code session at a
+  time holds the bot, and any new Claude Code session with the plugin
+  enabled takes it over — the earlier session's channel goes quiet.
+
 ## 1.3.0 — 2026-08-25
 
 - **The picker creates, it never switches.** Inside tmux the new-session
