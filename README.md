@@ -27,7 +27,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 - **`pier` is the front door**: outside tmux it opens the picker and attaches to whatever you pick; inside tmux it runs `claude` in the current pane; `pier -r` and friends pass straight through to `claude`. The first run offers to wire tmux and the hooks and to add a shell alias (`cl` by default). Once a day it checks the Homebrew tap for a newer pier and offers to upgrade
 - **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — the picker lists your running sessions first, the one you are in on top and marked `▌`, then directories. It creates, it never switches (that is the sidebar's job): `Enter` on a running session starts another Claude Code session in that session's directory, `Enter` on a directory starts one there — named after the directory, with a `-2`, `-3`, … suffix when the name is taken. `^S` instead of `Enter` starts a terminal session (a plain shell, no Claude Code) at the row — for when you want a terminal without splitting a pane or opening a new window. Picker keys are pressed inside the popup itself, no prefix, and every key acts on the highlighted `▸` row; the cursor starts on your current session, so `prefix+N` `Enter` is "one more Claude Code here". Outside tmux, plain `pier` opens the same picker in your terminal, where `Enter` on a running session attaches to it instead
 - **Resume**: a Claude Code session lost to a crash, power loss, or OS shutdown isn't gone — its directory grows a `↻ resume` button in the picker. `→` then `Enter` continues that conversation under its old session name; plain `Enter` starts blank and keeps the offer around. With any casualties present, an `↻ restore all` row rebuilds the whole pre-shutdown layout in one stroke
-- **Telegram**: `^T` in the picker (a `tg✓` badge shows it's on) starts the session with Claude Code's telegram channel attached
+- **Telegram**: `^T` in the picker (a `telegram ✓` badge shows it's on) starts the session with Claude Code's telegram channel attached
 - **Update notice**: while the Homebrew tap carries a newer pier, every sidebar shows an `↑ <version> · pier upgrade` line at the bottom
 - **Help**: click `? help` at the bottom of the sidebar (or press `?`) — a popup with every key above, so none of this needs memorizing
 
@@ -128,7 +128,7 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 bind-key x run-shell "~/.local/bin/pier done"
 
 # prefix + N : open the new-session picker
-bind-key N display-popup -E -w 46 -h 18 -T " New session " "~/.local/bin/pier new"
+bind-key N display-popup -E -w 46 -h 22 -T " New session " "~/.local/bin/pier new"
 ```
 
 Apply with `tmux source-file ~/.tmux.conf`.

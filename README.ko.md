@@ -27,7 +27,7 @@
 - **`pier`가 입구**: tmux 밖에서는 picker가 뜨고 고른 세션에 그대로 attach, tmux 안에서는 현재 pane에서 `claude`가 실행된다. `pier -r` 같은 인자는 그대로 `claude`에 전달. 최초 실행 때 tmux·hooks 배선과 셸 alias(기본 `cl`) 설정을 한 번 물어보고, 하루에 한 번 Homebrew tap에 새 버전이 있는지 확인해 업그레이드를 제안한다
 - **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — picker는 실행 중인 세션을 맨 위에 먼저 보여주고(지금 있는 세션이 `▌` 표시로 가장 위), 그 아래 디렉토리 목록이 온다. picker는 만들기만 하고 전환은 하지 않는다(전환은 사이드바 몫): 실행 중 세션 행에서 `Enter`는 그 세션의 디렉토리에 Claude Code 세션을 하나 더, 디렉토리 행에서 `Enter`는 그 경로에 새로 — 이름은 디렉토리를 따르고, 이미 있으면 `-2`, `-3`, … 이 붙는다. `Enter` 대신 `^S`를 누르면 그 행에 터미널 세션(Claude Code 없는 일반 셸) — pane 분할이나 새 윈도우 없이 터미널이 필요할 때. picker의 키는 popup이 떠 있는 동안 그대로 누른다(prefix 불필요). 모든 키는 `▸` 커서가 가리키는 행에 작용하며, 커서는 현재 세션에서 시작하므로 `prefix+N` `Enter`가 곧 "여기에 Claude Code 하나 더"다. tmux 밖 일반 터미널에서는 그냥 `pier`로 같은 picker가 뜨고, 거기서는 실행 중 세션 행의 `Enter`가 그 세션에 attach한다
 - **복구(resume)**: 크래시·전원 차단·OS 재부팅으로 날아간 Claude Code 세션은 사라지지 않는다 — picker에서 그 디렉토리에 `↻ resume` 버튼이 붙는다. `→` 후 `Enter`면 그 대화를 기존 세션명으로 이어가고, 그냥 `Enter`면 빈 세션으로 시작하며 복구 기회는 남는다. 사상자가 있으면 맨 위 `↻ restore all` 행이 셧다운 전 세션 구성 전체를 한 번에 되살린다
-- **텔레그램**: picker에서 `^T`(켜지면 `tg✓` 배지) — Claude Code의 텔레그램 채널을 붙인 채로 세션을 시작한다
+- **텔레그램**: picker에서 `^T`(켜지면 `telegram ✓` 배지) — Claude Code의 텔레그램 채널을 붙인 채로 세션을 시작한다
 - **업데이트 알림**: Homebrew tap에 새 버전이 있으면 모든 사이드바 하단에 `↑ <버전> · pier upgrade` 줄이 뜬다
 - **도움말**: 사이드바 하단 `? help` 클릭(또는 `?`) — 위의 모든 키를 popup으로 보여주니 외울 필요 없다
 
@@ -127,7 +127,7 @@ bind-key g run-shell "~/.local/bin/pier toggle"
 bind-key x run-shell "~/.local/bin/pier done"
 
 # prefix + N : 새 세션 picker 열기
-bind-key N display-popup -E -w 46 -h 18 -T " New session " "~/.local/bin/pier new"
+bind-key N display-popup -E -w 46 -h 22 -T " New session " "~/.local/bin/pier new"
 ```
 
 적용: `tmux source-file ~/.tmux.conf`

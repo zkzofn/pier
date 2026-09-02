@@ -93,7 +93,7 @@ func tmuxBlock(self string) string {
 		// bound directly (not via run-shell) so the popup lands on the
 		// client that pressed the key. Keep the geometry and title in sync
 		// with tmux.OpenNewPopup.
-		`bind-key N display-popup -E -w 46 -h 18 -T " New session " "` + self + ` new"`,
+		`bind-key N display-popup -E -w 46 -h 22 -T " New session " "` + self + ` new"`,
 		markerEnd,
 		"",
 	}, "\n")

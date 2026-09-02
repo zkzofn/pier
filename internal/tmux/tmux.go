@@ -278,7 +278,7 @@ func openPopup(session string, w, h int, title, cmd string) error {
 // OpenNewPopup opens the new-session picker popup. Keep the geometry and
 // title in sync with the prefix+N binding in setup.tmuxBlock.
 func OpenNewPopup(self, session string) error {
-	return openPopup(session, 46, 18, " New session ", self+" new")
+	return openPopup(session, 46, 22, " New session ", self+" new")
 }
 
 // OpenKeysPopup opens the keybinding cheatsheet popup. Keep the geometry in

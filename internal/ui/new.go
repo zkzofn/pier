@@ -220,7 +220,7 @@ func (m pickerModel) casualtyFor(r *pickerRow) (resume.Casualty, bool) {
 }
 
 func (m pickerModel) visibleRows() int {
-	v := m.height - listTop - 2 // hint + spacer at the bottom
+	v := m.height - listTop - 3 // spacer + two hint lines at the bottom
 	if v < 1 {
 		v = 1
 	}
@@ -551,14 +551,15 @@ func (m pickerModel) dirLine(r *pickerRow, cur bool, w uint) string {
 
 // hint names what Enter and ^S will do to the ▸ row. A fixed line taught
 // the wrong thing whenever the cursor sat on a running session — there
-// Enter jumps, it creates nothing.
+// Enter jumps, it creates nothing. Keys that mean the same on every row
+// get the line below it, keysHint.
 func (m pickerModel) hint() string {
 	r := m.rowAt(m.cursor)
 	switch {
 	case r == nil:
-		return "Esc: close"
+		return ""
 	case r.kind == prRestoreAll:
-		return "Enter: restore all · Esc"
+		return "Enter: restore all"
 	case r.kind == prOpen && !m.insideTmux:
 		return "Enter: jump · ^S: terminal there"
 	case r.kind == prOpen && r.open.Here:
@@ -572,7 +573,20 @@ func (m pickerModel) hint() string {
 		}
 		return "Enter: new · → resume · ^S: terminal"
 	}
-	return "Enter: claude · ^S: terminal · Tab: name"
+	return "Enter: claude · ^S: terminal"
+}
+
+// keysHint is the second hint line: the keys that don't depend on the ▸
+// row. ^T is on it from the first frame — nothing else in this popup
+// teaches it. Tab only where there is a session to name; a hint for a key
+// that does nothing costs the whole line its credibility.
+func (m pickerModel) keysHint() string {
+	keys := []string{"^T: telegram"}
+	if r := m.rowAt(m.cursor); r != nil && m.creates(r) {
+		keys = append(keys, "Tab: name")
+	}
+	keys = append(keys, "Esc: close")
+	return strings.Join(keys, " · ")
 }
 
 func (m pickerModel) View() string {
@@ -605,7 +619,9 @@ func (m pickerModel) View() string {
 
 	head := " " + stylePrompt.Render("> ") + m.query + "█"
 	if m.telegram {
-		badge := styleTg.Render("tg✓")
+		// Only the on-state lives here; the key itself is taught on the
+		// keys line below. Spelled out — "tg" told nobody anything.
+		badge := styleTg.Render("telegram ✓")
 		pad := int(w) - ansi.PrintableRuneWidth(head) - ansi.PrintableRuneWidth(badge) - 1
 		if pad > 0 {
 			head += strings.Repeat(" ", pad) + badge
@@ -658,5 +674,6 @@ func (m pickerModel) View() string {
 	} else {
 		line(" " + styleHint.Render(m.hint()))
 	}
+	line(" " + styleHint.Render(m.keysHint()))
 	return strings.TrimSuffix(b.String(), "\n")
 }

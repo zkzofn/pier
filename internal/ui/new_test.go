@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -173,7 +174,7 @@ func TestPickerHintFollowsCursorRow(t *testing.T) {
 		t.Errorf("open row: hint must explain jump/terminal-there:\n%s", v)
 	}
 	m.cursor = 4
-	if v := m.View(); !strings.Contains(v, "Enter: claude · ^S: terminal · Tab: name") {
+	if v := m.View(); !strings.Contains(v, "Enter: claude · ^S: terminal") {
 		t.Errorf("dir row: hint must explain claude/terminal:\n%s", v)
 	}
 	m.cursor = 5 // suite3 carries a casualty
@@ -326,6 +327,82 @@ func TestPickerCurrentOpenRowIsMarkedLikeTheSidebar(t *testing.T) {
 		if w := lipgloss.Width(line); w > 45 {
 			t.Errorf("line %d cols wide, over 45: %q", w, line)
 		}
+	}
+}
+
+// The ^T state shows only while it is on — a badge that is always there
+// is noise — and spelled out: "tg" told nobody anything. The key itself is
+// taught on the keys line, from the first frame.
+func TestPickerTelegramBadgeOnlyWhenOn(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, testCasualties)
+	m.insideTmux = true
+	head := func(v string) string { return strings.SplitN(v, "\n", 2)[0] }
+	v := m.View()
+	if strings.Contains(head(v), "telegram") {
+		t.Errorf("fresh picker: no badge while off:\n%s", v)
+	}
+	if !strings.Contains(v, "^T: telegram") {
+		t.Errorf("fresh picker: the keys line names ^T:\n%s", v)
+	}
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = mm.(pickerModel)
+	v = m.View()
+	if !m.telegram || !strings.Contains(head(v), "telegram ✓") {
+		t.Errorf("after ^T: the header carries the on-state:\n%s", v)
+	}
+	if strings.Contains(v, "tg✓") {
+		t.Errorf("the abbreviation is gone:\n%s", v)
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 45 {
+			t.Errorf("line %d cols wide, over 45: %q", w, line)
+		}
+	}
+	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = mm.(pickerModel)
+	if v := m.View(); m.telegram || strings.Contains(v, "telegram ✓") {
+		t.Errorf("^T again: badge gone:\n%s", v)
+	}
+}
+
+// The second hint line carries the keys that mean the same on every row;
+// Tab appears only where there is a session to name, and only there.
+func TestPickerKeysLine(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, testCasualties)
+	m.insideTmux = true
+	last := func(v string) string {
+		lines := strings.Split(v, "\n")
+		return lines[len(lines)-1]
+	}
+	// rows: [restore-all, open me (here), open suite2, open recoder, sep, dir pier, dir suite3]
+	if l := last(m.View()); !strings.Contains(l, "^T: telegram") || !strings.Contains(l, "Tab: name") || !strings.Contains(l, "Esc: close") {
+		t.Errorf("open row inside tmux creates, so Tab names: %q", l)
+	}
+	if v := m.View(); strings.Count(v, "Tab: name") != 1 {
+		t.Errorf("Tab is named once, on the keys line:\n%s", v)
+	}
+	m.cursor = 0
+	if l := last(m.View()); strings.Contains(l, "Tab: name") || !strings.Contains(l, "^T: telegram") {
+		t.Errorf("restore-all row: nothing to name, ^T still applies: %q", l)
+	}
+	m.cursor = 5
+	if l := last(m.View()); !strings.Contains(l, "Tab: name") {
+		t.Errorf("dir row: Tab names: %q", l)
+	}
+	m.insideTmux = false
+	m.cursor = 1
+	if l := last(m.View()); strings.Contains(l, "Tab: name") {
+		t.Errorf("standalone open row jumps, nothing to name: %q", l)
+	}
+	// A list longer than the popup gives up rows, never the hint lines: the
+	// view is exactly the popup's height and still ends on the keys line.
+	many := make([]newsess.Candidate, 0, 30)
+	for i := 0; i < 30; i++ {
+		many = append(many, newsess.Candidate{Path: fmt.Sprintf("/Users/j/dev/d%02d", i), Name: fmt.Sprintf("d%02d", i)})
+	}
+	tall := testPicker(nil, many, nil)
+	if v := tall.View(); strings.Count(v, "\n")+1 != tall.height || !strings.Contains(last(v), "^T: telegram") {
+		t.Errorf("%d lines for height %d, keys line last:\n%s", strings.Count(v, "\n")+1, tall.height, v)
 	}
 }
 
