@@ -13,13 +13,16 @@ import (
 	"runtime"
 	"strings"
 
+	"pier/internal/agent"
 	"pier/internal/prompt"
 	"pier/internal/setup"
 )
 
-// Config is what the wizard recorded.
+// Config is what the wizard and `pier agent` / `pier alias` recorded.
 type Config struct {
-	Alias string `json:"alias"` // shell alias pointing at pier ("" when skipped)
+	Alias  string       `json:"alias,omitempty"`  // shell alias pointing at pier ("" when skipped)
+	Agent  string       `json:"agent,omitempty"`  // default agent name (e.g. "claude", "agy")
+	Agents []agent.Spec `json:"agents,omitempty"` // custom or overridden agent specs
 }
 
 // ConfigPath is $XDG_CONFIG_HOME/pier/config.json (default
@@ -150,12 +153,13 @@ func DefaultEnv(self string) Env {
 	}
 }
 
-// Wizard is the first run: offer setup when tmux/hooks aren't wired, offer
-// a shell alias, and record the outcome so it never asks again.
+// Wizard is the first run: offer setup when tmux/hooks aren't wired, pick
+// the default agent when multiple are installed, and record the outcome so
+// it never asks again. Users run `pier` directly (no `cl` alias prompt).
 func Wizard(p *prompt.Prompter, env Env) error {
 	fmt.Fprintln(p.Out, "pier — first run")
 	if setup.NeedsSetup(env.TmuxConf, env.Settings) {
-		if p.YesNo("pier needs tmux and Claude Code hooks wired (~/.tmux.conf, ~/.claude/settings.json — settings.json is backed up first). Do it now?", true) {
+		if p.YesNo("pier needs tmux and agent hooks wired (~/.tmux.conf, ~/.claude/settings.json — settings.json is backed up first). Do it now?", true) {
 			if err := env.RunSetup(); err != nil {
 				fmt.Fprintln(p.Out, "setup:", err)
 			}
@@ -163,32 +167,60 @@ func Wizard(p *prompt.Prompter, env Env) error {
 			fmt.Fprintln(p.Out, "skipped — run `pier setup` later to wire tmux and hooks")
 		}
 	}
-	alias := ""
-	if p.YesNo("Add a shell alias for pier?", true) {
-		alias = askAlias(p, env)
-	}
-	return Save(env.ConfigPath, Config{Alias: alias})
-}
-
-// askAlias prompts for a name (default cl), validates it, warns on
-// conflicts, and installs it; returns the alias actually installed.
-func askAlias(p *prompt.Prompter, env Env) string {
-	for try := 0; try < 3; try++ {
-		name := p.Line("alias name", "cl")
-		if !ValidName(name) {
-			fmt.Fprintf(p.Out, "invalid name %q — letters, digits, _ and - only, not starting with a digit or -\n", name)
-			continue
+	avail := agent.Available(nil, env.LookPath)
+	defAgent := avail[0].Name
+	if len(avail) > 1 {
+		names := make([]string, len(avail))
+		for i, a := range avail {
+			names[i] = a.Name
 		}
-		if cs := Conflicts(name, env.RCPath, env.LookPath); len(cs) > 0 {
-			fmt.Fprintln(p.Out, strings.Join(cs, "\n"))
-			if !p.YesNo("Use it anyway?", false) {
-				continue
+		choice := p.Line("default agent ["+strings.Join(names, "/")+"]", defAgent)
+		for _, a := range avail {
+			if a.Name == choice {
+				defAgent = choice
+				break
 			}
 		}
-		return Install(p.Out, env, name)
 	}
-	fmt.Fprintln(p.Out, "no alias set — `pier alias <name>` sets one later")
-	return ""
+	return Save(env.ConfigPath, Config{Agent: defAgent})
+}
+
+// ShowAgent prints the active default agent and all available agents on PATH.
+func ShowAgent(out io.Writer, env Env) {
+	c, _ := Load(env.ConfigPath)
+	avail := agent.Available(c.Agents, env.LookPath)
+	cur := avail[agent.Resolve(c.Agent, avail)]
+	names := make([]string, len(avail))
+	for i, a := range avail {
+		names[i] = a.Name
+	}
+	fmt.Fprintf(out, "agent: %s (available: %s — switch in picker with ^A, or `pier agent <name>`)\n",
+		cur.Name, strings.Join(names, ", "))
+}
+
+// SetAgent updates the default agent in config.json.
+func SetAgent(out io.Writer, env Env, name string) error {
+	c, _ := Load(env.ConfigPath)
+	spec, ok := agent.Find(name, c.Agents)
+	if !ok {
+		all := agent.All(c.Agents)
+		names := make([]string, len(all))
+		for i, a := range all {
+			names[i] = a.Name
+		}
+		return fmt.Errorf("unknown agent %q — known agents: %s", name, strings.Join(names, ", "))
+	}
+	if env.LookPath != nil {
+		if _, err := env.LookPath(spec.Bin()); err != nil {
+			fmt.Fprintf(out, "warning: %q not found in PATH\n", spec.Bin())
+		}
+	}
+	c.Agent = spec.Name
+	if err := Save(env.ConfigPath, c); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "default agent: %s\n", spec.Name)
+	return nil
 }
 
 // Install writes `alias name='…'` into the rc file, or prints the line when

@@ -28,9 +28,9 @@ func TestKeysContentFitsPopup(t *testing.T) {
 			t.Errorf("line %d cols wide, over 45: %q", w, line)
 		}
 	}
-	// The popup is 29 tall (2 for the border): the content must fit too.
-	if n := strings.Count(keysContent(), "\n") + 1; n > 27 {
-		t.Errorf("keys content is %d lines, over 27", n)
+	// The popup is 30 tall (2 for the border): the content must fit too.
+	if n := strings.Count(keysContent(), "\n") + 1; n > 28 {
+		t.Errorf("keys content is %d lines, over 28", n)
 	}
 }
 
@@ -92,6 +92,9 @@ func TestKeysContentTeachesRowModel(t *testing.T) {
 	}
 	if !strings.Contains(c, "^T") {
 		t.Error("picker section should list ^T (telegram)")
+	}
+	if !strings.Contains(c, "^A") {
+		t.Error("picker section should list ^A (switch agent)")
 	}
 }
 

@@ -13,7 +13,7 @@ func TestClassify(t *testing.T) {
 		{[]string{"-p", "hi"}, KindPassthrough},
 		{[]string{"-v"}, KindVersion}, {[]string{"--version"}, KindVersion}, {[]string{"version"}, KindVersion},
 		{[]string{"-h"}, KindHelp}, {[]string{"--help"}, KindHelp}, {[]string{"help"}, KindHelp},
-		{[]string{"setup"}, KindSubcommand}, {[]string{"new"}, KindSubcommand}, {[]string{"alias", "cl"}, KindSubcommand},
+		{[]string{"setup"}, KindSubcommand}, {[]string{"new"}, KindSubcommand}, {[]string{"agent"}, KindSubcommand}, {[]string{"agent", "agy"}, KindSubcommand}, {[]string{"alias", "cl"}, KindSubcommand},
 		{[]string{"reap"}, KindSubcommand}, {[]string{"upgrade"}, KindSubcommand}, {[]string{"hook", "stop"}, KindSubcommand},
 		{[]string{"setpu"}, KindUnknown}, {[]string{"mcp"}, KindUnknown},
 	}

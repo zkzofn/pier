@@ -226,3 +226,23 @@ func TestDirUnderRoot(t *testing.T) {
 		t.Errorf("Dir = %q", got)
 	}
 }
+
+func TestRecordAgyPayload(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMUX_PANE", "%55")
+
+	payload := []byte(`{"conversationId":"conv-99","workspacePaths":["/Users/j/dev/pier"],"lastUserInput":"implement multi-agent support"}`)
+	if !IsAgyPayload(payload) {
+		t.Fatal("expected IsAgyPayload to be true")
+	}
+	if err := Record(dir, "user-prompt-submit", payload); err != nil {
+		t.Fatal(err)
+	}
+	st, ok := ReadAll(dir)["%55"]
+	if !ok {
+		t.Fatal("missing state for %55")
+	}
+	if st.State != Working || st.SessionID != "conv-99" || st.CWD != "/Users/j/dev/pier" || st.LastPrompt != "implement multi-agent support" {
+		t.Errorf("unexpected agy state: %+v", st)
+	}
+}

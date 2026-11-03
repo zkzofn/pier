@@ -20,16 +20,17 @@ import (
 
 const version = "1.3.1"
 
-const usageText = `pier %s — tmux sidebar for Claude Code sessions
+const usageText = `pier %s — tmux sidebar for AI coding sessions (claude, agy, codex, grok)
 
 usage:
   pier                      start: outside tmux, pick an open session or a
-                              directory and attach; inside tmux, run claude
-                              in this pane. The first run offers setup and
-                              a shell alias; upgrades are announced here
-  pier <claude flags...>    pass straight through to claude (e.g. pier -r)
-  pier setup                wire pier into ~/.tmux.conf and Claude Code hooks
-  pier alias [name]         show or set the shell alias for pier
+                              directory and attach; inside tmux, run the
+                              default agent in this pane. The first run offers
+                              setup and default agent selection
+  pier <agent flags...>     pass straight through to the default agent
+  pier setup                wire pier into ~/.tmux.conf and agent hooks
+  pier agent [name]         show or set the default agent (claude, agy, codex, grok)
+  pier alias [name]         show or set an optional shell alias for pier
   pier upgrade              check the Homebrew tap now and upgrade
   pier run                  run the sidebar TUI (inside a tmux pane)
   pier new                  new-session picker (sidebar "+" / prefix+N /
@@ -41,7 +42,7 @@ usage:
                               one in sidebar order (or just exit if alone)
   pier reap                 kill sessions left with only a sidebar pane
                               (tmux pane-exited hook)
-  pier hook <event>         Claude Code hook endpoint (reads stdin JSON)
+  pier hook <event>         agent hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
                                       stop | permission-request |
                                       session-start | session-end
@@ -83,6 +84,13 @@ func subcommand(args []string) error {
 	switch args[0] {
 	case "setup":
 		return setup.Run(self())
+	case "agent":
+		env := onboard.DefaultEnv(self())
+		if len(args) < 2 {
+			onboard.ShowAgent(os.Stdout, env)
+			return nil
+		}
+		return onboard.SetAgent(os.Stdout, env, args[1])
 	case "alias":
 		env := onboard.DefaultEnv(self())
 		if len(args) < 2 {
@@ -124,6 +132,9 @@ func subcommand(args []string) error {
 			os.Exit(2)
 		}
 		payload, _ := io.ReadAll(os.Stdin)
+		if state.IsAgyPayload(payload) {
+			fmt.Println("{}")
+		}
 		// Liveness bookkeeping is best-effort: a failed write must never
 		// surface as a hook error inside Claude Code.
 		switch args[1] {

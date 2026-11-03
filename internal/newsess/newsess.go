@@ -64,6 +64,9 @@ func Collect(home string, panes []tmux.Pane) []Candidate {
 	for _, p := range historyPaths(home) {
 		add(p)
 	}
+	for _, p := range agyHistoryPaths(home) {
+		add(p)
+	}
 	add(home)
 
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Path < cands[j].Path })
@@ -181,6 +184,29 @@ func cwdFromTranscript(path string) string {
 		}
 	}
 	return ""
+}
+
+// agyHistoryPaths extracts working directories from Antigravity CLI's
+// ~/.gemini/antigravity-cli/history.jsonl ("workspace" field).
+func agyHistoryPaths(home string) []string {
+	path := filepath.Join(home, ".gemini", "antigravity-cli", "history.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var paths []string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var rec struct {
+			Workspace string `json:"workspace"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) == nil && rec.Workspace != "" {
+			paths = append(paths, rec.Workspace)
+		}
+	}
+	return paths
 }
 
 // Filter returns candidates whose path or name contains the query

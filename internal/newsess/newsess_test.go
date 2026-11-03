@@ -202,3 +202,29 @@ func TestCollectResolvesSymlinkedOpenPaths(t *testing.T) {
 		t.Error("the pane's directory must not be offered under its resolved name either")
 	}
 }
+
+func TestCollectIncludesAgyHistory(t *testing.T) {
+	home := t.TempDir()
+	ws := filepath.Join(home, "work", "agy-proj")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	histDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(histDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"display":"hello","timestamp":1,"workspace":"` + ws + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(histDir, "history.jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cands := Collect(home, nil)
+	found := false
+	for _, c := range cands {
+		if c.Path == ws {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected %s from agy history in candidates, got %+v", ws, cands)
+	}
+}

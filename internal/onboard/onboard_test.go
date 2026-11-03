@@ -133,73 +133,60 @@ func testEnv(t *testing.T, wired bool) (Env, *int) {
 func TestWizardFreshMachine(t *testing.T) {
 	env, setups := testEnv(t, false)
 	var out bytes.Buffer
-	// setup? y · alias? y · name: Enter (=cl)
-	if err := Wizard(prompt.New(strings.NewReader("y\ny\n\n"), &out), env); err != nil {
+	// setup? y (no cl alias question; single fallback agent claude is saved)
+	if err := Wizard(prompt.New(strings.NewReader("y\n"), &out), env); err != nil {
 		t.Fatal(err)
 	}
 	if *setups != 1 {
 		t.Errorf("setup should run once, ran %d", *setups)
 	}
-	rc, _ := os.ReadFile(env.RCPath)
-	if !strings.Contains(string(rc), "alias cl='pier'") {
-		t.Errorf("alias not written:\n%s", rc)
+	if _, err := os.Stat(env.RCPath); err == nil {
+		t.Error("wizard must not write a shell alias anymore")
 	}
-	if c, ok := Load(env.ConfigPath); !ok || c.Alias != "cl" {
-		t.Errorf("config should record alias cl: %+v %v", c, ok)
-	}
-	if !strings.Contains(out.String(), "source") {
-		t.Errorf("should tell the user to reload the shell: %q", out.String())
+	if c, ok := Load(env.ConfigPath); !ok || c.Agent != "claude" || c.Alias != "" {
+		t.Errorf("config should record default agent claude and no alias: %+v %v", c, ok)
 	}
 }
 
-func TestWizardAlreadyWiredSkipsSetupQuestion(t *testing.T) {
+func TestWizardMultipleAgentsPromptsDefault(t *testing.T) {
 	env, setups := testEnv(t, true)
+	env.LookPath = func(name string) (string, error) {
+		if name == "claude" || name == "agy" {
+			return "/usr/local/bin/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
 	var out bytes.Buffer
-	// alias? n  (no setup question is asked, so this answer is the alias one)
-	if err := Wizard(prompt.New(strings.NewReader("n\n"), &out), env); err != nil {
+	if err := Wizard(prompt.New(strings.NewReader("agy\n"), &out), env); err != nil {
 		t.Fatal(err)
 	}
 	if *setups != 0 {
 		t.Error("setup must not be offered when already wired")
 	}
-	if strings.Contains(out.String(), "hooks wired") {
-		t.Errorf("setup question should not appear: %q", out.String())
-	}
-	if _, err := os.Stat(env.RCPath); err == nil {
-		t.Error("declining the alias must not touch the rc file")
-	}
-	if c, ok := Load(env.ConfigPath); !ok || c.Alias != "" {
-		t.Errorf("config should exist with an empty alias: %+v %v", c, ok)
+	if c, ok := Load(env.ConfigPath); !ok || c.Agent != "agy" {
+		t.Errorf("config should record chosen agent agy: %+v %v", c, ok)
 	}
 }
 
-func TestWizardConflictThenOtherName(t *testing.T) {
+func TestSetAndShowAgent(t *testing.T) {
 	env, _ := testEnv(t, true)
-	os.WriteFile(env.RCPath, []byte("cl() { claude \"$@\"; }\n"), 0o644)
+	env.LookPath = func(name string) (string, error) {
+		if name == "claude" || name == "agy" {
+			return "/usr/local/bin/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
 	var out bytes.Buffer
-	// alias? y · name: cl (conflict) · use anyway? n · name: pp
-	if err := Wizard(prompt.New(strings.NewReader("y\ncl\nn\npp\n"), &out), env); err != nil {
+	if err := SetAgent(&out, env, "gemini"); err == nil {
+		t.Error("gemini is not a supported agent and must error")
+	}
+	if err := SetAgent(&out, env, "agy"); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ := Load(env.ConfigPath); c.Alias != "pp" {
-		t.Errorf("alias should be pp after the retry, got %q", c.Alias)
-	}
-	rc, _ := os.ReadFile(env.RCPath)
-	if !strings.HasPrefix(string(rc), "cl() {") || !strings.Contains(string(rc), "alias pp='pier'") {
-		t.Errorf("rc should keep the function and gain the alias block:\n%s", rc)
-	}
-}
-
-func TestWizardUnknownShellPrintsTheLine(t *testing.T) {
-	env, _ := testEnv(t, true)
-	env.RCPath = ""
-	var out bytes.Buffer
-	Wizard(prompt.New(strings.NewReader("y\n\n"), &out), env)
-	if !strings.Contains(out.String(), "alias cl='pier'") {
-		t.Errorf("unknown shell: the line to add must be printed: %q", out.String())
-	}
-	if c, _ := Load(env.ConfigPath); c.Alias != "" {
-		t.Errorf("nothing was installed, config alias should be empty, got %q", c.Alias)
+	out.Reset()
+	ShowAgent(&out, env)
+	if !strings.Contains(out.String(), "agent: agy") || !strings.Contains(out.String(), "claude, agy") {
+		t.Errorf("ShowAgent = %q", out.String())
 	}
 }
 

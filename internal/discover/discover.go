@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"pier/internal/agent"
 	"pier/internal/tmux"
 )
 
@@ -16,9 +17,10 @@ import (
 // observed live on this machine; older/plain installs show "claude".
 var versionRe = regexp.MustCompile(`^\d+(\.\d+)+[a-z]?$`)
 
-// IsClaudeCommand reports whether a pane_current_command looks like Claude Code.
+// IsClaudeCommand reports whether a pane_current_command looks like a supported
+// AI coding CLI (claude, agy, codex, grok, or a Claude Code version binary).
 func IsClaudeCommand(cmd string) bool {
-	return cmd == "claude" || versionRe.MatchString(cmd)
+	return agent.IsBuiltinBin(cmd) || versionRe.MatchString(cmd)
 }
 
 // Worktree is a group of Claude Code panes sharing a working directory.

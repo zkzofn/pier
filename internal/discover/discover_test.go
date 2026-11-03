@@ -11,6 +11,10 @@ func TestIsClaudeCommand(t *testing.T) {
 		"2.1.206":  true, // observed live: CC process title is its version
 		"2.1.211":  true,
 		"claude":   true,
+		"agy":      true,
+		"codex":    true,
+		"grok":     true,
+		"gemini":   false,
 		"1.0":      true,
 		"3.6a":     true, // tmux-style version suffix
 		"zsh":      false,

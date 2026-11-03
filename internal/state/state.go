@@ -73,6 +73,32 @@ type hookPayload struct {
 	CWD       string `json:"cwd"`
 	Prompt    string `json:"prompt"` // UserPromptSubmit only
 	Source    string `json:"source"` // SessionStart only: startup|resume|clear|compact
+
+	// Antigravity (agy) camelCase fields:
+	ConversationID string   `json:"conversationId"`
+	WorkspacePaths []string `json:"workspacePaths"`
+	LastUserInput  string   `json:"lastUserInput"`
+}
+
+func (p *hookPayload) normalize() {
+	if p.SessionID == "" && p.ConversationID != "" {
+		p.SessionID = p.ConversationID
+	}
+	if p.CWD == "" && len(p.WorkspacePaths) > 0 {
+		p.CWD = p.WorkspacePaths[0]
+	}
+	if p.Prompt == "" && p.LastUserInput != "" {
+		p.Prompt = p.LastUserInput
+	}
+}
+
+// IsAgyPayload reports whether raw stdin JSON came from Antigravity CLI
+// (which expects a JSON object "{}" on stdout).
+func IsAgyPayload(payload []byte) bool {
+	var m struct {
+		ConversationID string `json:"conversationId"`
+	}
+	return json.Unmarshal(payload, &m) == nil && m.ConversationID != ""
 }
 
 func fileFor(dir, paneID string) string {
@@ -131,6 +157,7 @@ func Record(dir, event string, payload []byte) error {
 	}
 	var p hookPayload
 	_ = json.Unmarshal(payload, &p)
+	p.normalize()
 	// Compaction rewrites the transcript mid-conversation; it is not a
 	// session boundary, so leave the recorded state and prompt alone.
 	if event == "session-start" && p.Source == "compact" {

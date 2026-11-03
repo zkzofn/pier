@@ -311,3 +311,47 @@ func TestRefreshTmuxBlock(t *testing.T) {
 		t.Errorf("missing file -> nothing: %q %v", msg, err)
 	}
 }
+
+func TestAgyHooksFromScratchAndMerge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	existing := `{
+  "custom-linter": {
+    "Stop": [{"type": "command", "command": "/bin/echo done"}]
+  }
+}`
+	if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := AgyHooks(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "4 event(s) wired") {
+		t.Errorf("want 4 events wired, got %q", msg)
+	}
+	data, _ := os.ReadFile(path)
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	if root["custom-linter"] == nil {
+		t.Error("existing named hook lost")
+	}
+	pierBlock, _ := json.Marshal(root["pier"])
+	for _, ev := range []string{"SessionStart", "PreInvocation", "PostToolUse", "Stop", "pier hook"} {
+		if !strings.Contains(string(pierBlock), ev) {
+			t.Errorf("pier hook block missing %q: %s", ev, pierBlock)
+		}
+	}
+	if _, err := os.Stat(path + ".bak-pier"); err != nil {
+		t.Error("backup not written")
+	}
+	// Re-run is idempotent.
+	msg, err = AgyHooks(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "skipped") {
+		t.Errorf("want skipped on re-run, got %q", msg)
+	}
+}

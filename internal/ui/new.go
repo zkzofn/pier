@@ -21,6 +21,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,9 +32,11 @@ import (
 	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/truncate"
 
+	"pier/internal/agent"
 	"pier/internal/claude"
 	"pier/internal/discover"
 	"pier/internal/newsess"
+	"pier/internal/onboard"
 	"pier/internal/resume"
 	"pier/internal/state"
 	"pier/internal/tmux"
@@ -100,6 +103,8 @@ type pickerModel struct {
 	rows       []pickerRow
 	taken      map[string]bool
 	casualties map[string]resume.Casualty // by cleaned cwd
+	agents     []agent.Spec               // available AI CLI agents in ^A cycle order
+	agentIdx   int                        // index into agents
 	query      string
 	cursor     int // index into rows
 	scroll     int
@@ -137,6 +142,9 @@ func RunNew() (string, error) {
 	for _, c := range resume.List(resume.Dir()) {
 		casualties[c.CWD] = c
 	}
+	cfg, _ := onboard.Load(onboard.ConfigPath())
+	agents := agent.Available(cfg.Agents, exec.LookPath)
+	agentIdx := agent.Resolve(cfg.Agent, agents)
 	m := pickerModel{
 		home:       home,
 		insideTmux: insideTmux,
@@ -145,6 +153,8 @@ func RunNew() (string, error) {
 		states:     state.ReadAll(state.Dir()),
 		taken:      tmux.SessionNames(),
 		casualties: casualties,
+		agents:     agents,
+		agentIdx:   agentIdx,
 		width:      46,
 		height:     18,
 	}
@@ -314,12 +324,23 @@ func baseName(r *pickerRow) string {
 	return r.cand.Name
 }
 
+// currentAgent returns the active agent spec in the picker (defaults to claude).
+func (m pickerModel) currentAgent() agent.Spec {
+	if len(m.agents) == 0 {
+		return agent.Builtins[0]
+	}
+	if m.agentIdx < 0 || m.agentIdx >= len(m.agents) {
+		return m.agents[0]
+	}
+	return m.agents[m.agentIdx]
+}
+
 // telegramReady is the ^T preflight at launch time: the toggle already
 // asked, but a token or plugin can vanish in between, and a session that
 // silently lacks telegram is exactly what ^T exists to avoid. Sets errMsg
 // and reports false when not ready; always true with ^T off.
 func (m *pickerModel) telegramReady() bool {
-	if !m.telegram {
+	if !m.telegram || m.currentAgent().Name != "claude" {
 		return true
 	}
 	if err := telegramPreflight(m.home); err != nil {
@@ -356,7 +377,11 @@ func (m pickerModel) confirm(i int, shell bool) (tea.Model, tea.Cmd) {
 	if !shell && !m.telegramReady() {
 		return m, nil
 	}
-	command := claude.Cmd(m.telegram)
+	ag := m.currentAgent()
+	command := ag.Command()
+	if ag.Name == "claude" {
+		command = claude.Cmd(m.telegram)
+	}
 	resumeSID := ""
 	if !shell && m.onResume {
 		// The ↻ button: continue the dead conversation, under its old
@@ -491,7 +516,18 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.confirm(m.cursor, false)
 		case "ctrl+s":
 			return m.confirm(m.cursor, true)
+		case "ctrl+a":
+			m.errMsg = ""
+			if len(m.agents) > 1 {
+				m.agentIdx = (m.agentIdx + 1) % len(m.agents)
+				if m.currentAgent().Name != "claude" {
+					m.telegram = false
+				}
+			}
 		case "ctrl+t":
+			if m.currentAgent().Name != "claude" {
+				break
+			}
 			// Ask before the badge goes on: Claude Code starts fine
 			// without the plugin or its token and just never attaches
 			// the channel, so this is where the failure can be seen.
@@ -587,6 +623,7 @@ func (m pickerModel) dirLine(r *pickerRow, cur bool, w uint) string {
 // get the line below it, keysHint.
 func (m pickerModel) hint() string {
 	r := m.rowAt(m.cursor)
+	ag := m.currentAgent().Name
 	switch {
 	case r == nil:
 		return ""
@@ -595,9 +632,9 @@ func (m pickerModel) hint() string {
 	case r.kind == prOpen && !m.insideTmux:
 		return "Enter: jump · ^S: terminal there"
 	case r.kind == prOpen && r.open.Here:
-		return "Enter: new claude here · ^S: terminal here"
+		return "Enter: new " + ag + " here · ^S: terminal here"
 	case r.kind == prOpen:
-		return "Enter: new claude there · ^S: terminal there"
+		return "Enter: new " + ag + " there · ^S: terminal there"
 	}
 	if _, ok := m.casualtyFor(r); ok {
 		if m.onResume {
@@ -605,19 +642,29 @@ func (m pickerModel) hint() string {
 		}
 		return "Enter: new · → resume · ^S: terminal"
 	}
-	return "Enter: claude · ^S: terminal"
+	return "Enter: " + ag + " · ^S: terminal"
 }
 
 // keysHint is the second hint line: the keys that don't depend on the ▸
-// row. ^T is on it from the first frame — nothing else in this popup
-// teaches it. Tab only where there is a session to name; a hint for a key
-// that does nothing costs the whole line its credibility.
+// row. ^A and ^T are on it from the first frame so users immediately see
+// how to cycle agents and attach telegram. Tab only where there is a
+// session to name; a hint for a key that does nothing costs the whole line
+// its credibility.
 func (m pickerModel) keysHint() string {
-	keys := []string{"^T: telegram"}
+	keys := []string{"^A: agent"}
+	if m.currentAgent().Name == "claude" {
+		keys = append(keys, "^T: telegram")
+	}
+	hasTab := false
 	if r := m.rowAt(m.cursor); r != nil && m.creates(r) {
 		keys = append(keys, "Tab: name")
+		hasTab = true
 	}
-	keys = append(keys, "Esc: close")
+	if hasTab && m.currentAgent().Name == "claude" {
+		keys = append(keys, "Esc")
+	} else {
+		keys = append(keys, "Esc: close")
+	}
 	return strings.Join(keys, " · ")
 }
 
@@ -634,6 +681,7 @@ func (m pickerModel) View() string {
 		b.WriteString("\n")
 	}
 
+	ag := m.currentAgent().Name
 	if m.editing {
 		path := ""
 		if r := m.rowAt(m.cursor); r != nil && m.creates(r) {
@@ -645,19 +693,18 @@ func (m pickerModel) View() string {
 		if m.errMsg != "" {
 			line(" " + styleNewErr.Render(m.errMsg))
 		}
-		line(" " + styleHint.Render("Enter: claude · ^S: terminal · Esc: back"))
+		line(" " + styleHint.Render("Enter: "+ag+" · ^S: terminal · Esc: back"))
 		return strings.TrimSuffix(b.String(), "\n")
 	}
 
 	head := " " + stylePrompt.Render("> ") + m.query + "█"
+	badge := styleHint.Render("[" + ag + " · ^A]")
 	if m.telegram {
-		// Only the on-state lives here; the key itself is taught on the
-		// keys line below. Spelled out — "tg" told nobody anything.
-		badge := styleTg.Render("telegram ✓")
-		pad := int(w) - ansi.PrintableRuneWidth(head) - ansi.PrintableRuneWidth(badge) - 1
-		if pad > 0 {
-			head += strings.Repeat(" ", pad) + badge
-		}
+		badge = styleTg.Render("telegram ✓") + " " + badge
+	}
+	pad := int(w) - ansi.PrintableRuneWidth(head) - ansi.PrintableRuneWidth(badge) - 1
+	if pad > 0 {
+		head += strings.Repeat(" ", pad) + badge
 	}
 	line(head)
 	line("")

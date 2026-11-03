@@ -376,3 +376,61 @@ func ClaudeHooks(path, self string) (string, error) {
 	}
 	return fmt.Sprintf("claude hooks: %d event(s) wired (backup: %s.bak-pier)", added, filepath.Base(path)), nil
 }
+
+// AgyHooks merges pier's named hook block ("pier") into Antigravity CLI's
+// global hooks.json (~/.gemini/config/hooks.json), preserving any other named
+// hooks. A .bak-pier backup is written before the first modification.
+func AgyHooks(path, self string) (string, error) {
+	root := map[string]any{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &root); err != nil {
+			return "", fmt.Errorf("parse %s: %w", path, err)
+		}
+	case os.IsNotExist(err):
+		// start from an empty hooks object
+	default:
+		return "", err
+	}
+
+	if existing, ok := root["pier"]; ok {
+		if raw, _ := json.Marshal(existing); strings.Contains(string(raw), "pier hook") {
+			return "agy hooks: already configured — skipped", nil
+		}
+	}
+
+	handler := func(arg string) map[string]any {
+		return map[string]any{
+			"type":    "command",
+			"command": self + " hook " + arg,
+			"timeout": 5,
+		}
+	}
+	root["pier"] = map[string]any{
+		"SessionStart":  []any{handler("session-start")},
+		"PreInvocation": []any{handler("user-prompt-submit")},
+		"PostToolUse": []any{map[string]any{
+			"matcher": "*",
+			"hooks":   []any{handler("pre-tool-use")},
+		}},
+		"Stop": []any{handler("stop")},
+	}
+
+	if data != nil {
+		if err := os.WriteFile(path+".bak-pier", data, 0o600); err != nil {
+			return "", err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("agy hooks: 4 event(s) wired (backup: %s.bak-pier)", filepath.Base(path)), nil
+}

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"pier/internal/agent"
 	"pier/internal/claude"
 	"pier/internal/newsess"
 	"pier/internal/resume"
@@ -45,6 +46,7 @@ func testPicker(opens []newsess.Open, dirs []newsess.Candidate, cas map[string]r
 		states:     map[string]state.PaneState{"%1": {Pane: "%1", State: state.Working}},
 		taken:      map[string]bool{},
 		casualties: cas,
+		agents:     []agent.Spec{{Name: "claude", Cmd: "claude"}, {Name: "agy", Cmd: "agy"}},
 		width:      46,
 		height:     18,
 	}
@@ -378,7 +380,7 @@ func TestPickerKeysLine(t *testing.T) {
 		return lines[len(lines)-1]
 	}
 	// rows: [restore-all, open me (here), open suite2, open recoder, sep, dir pier, dir suite3]
-	if l := last(m.View()); !strings.Contains(l, "^T: telegram") || !strings.Contains(l, "Tab: name") || !strings.Contains(l, "Esc: close") {
+	if l := last(m.View()); !strings.Contains(l, "^A: agent") || !strings.Contains(l, "^T: telegram") || !strings.Contains(l, "Tab: name") || !strings.Contains(l, "Esc") {
 		t.Errorf("open row inside tmux creates, so Tab names: %q", l)
 	}
 	if v := m.View(); strings.Count(v, "Tab: name") != 1 {
@@ -489,5 +491,44 @@ func TestPickerTelegramPreflight(t *testing.T) {
 	m = mm.(pickerModel)
 	if m.telegram || m.errMsg != "" {
 		t.Errorf("^T off: flag off and error cleared; got on=%v err=%q", m.telegram, m.errMsg)
+	}
+}
+
+func TestPickerCtrlACyclesAgentAndShowsShortcutInUI(t *testing.T) {
+	var gotCmd string
+	tmuxNewSwitch = func(name, path, command string) error {
+		gotCmd = command
+		return nil
+	}
+	defer func() { tmuxNewSwitch = tmux.NewSessionAndSwitch }()
+
+	m := testPicker(testOpensHere, testDirs, nil)
+	m.insideTmux = true
+	v := m.View()
+	if !strings.Contains(v, "[claude · ^A]") || !strings.Contains(v, "^A: agent") {
+		t.Errorf("picker must show [claude · ^A] badge and ^A: agent shortcut:\n%s", v)
+	}
+
+	// Press ^A -> cycles to agy
+	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = mm.(pickerModel)
+	v = m.View()
+	if !strings.Contains(v, "[agy · ^A]") || !strings.Contains(v, "Enter: new agy here") {
+		t.Errorf("after ^A: badge and hint must reflect agy:\n%s", v)
+	}
+	if strings.Contains(v, "^T: telegram") {
+		t.Errorf("telegram hint should hide when agent is not claude:\n%s", v)
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(line); w > 45 {
+			t.Errorf("line %d cols wide, over 45: %q", w, line)
+		}
+	}
+
+	// Launch on dir row -> runs "agy"
+	m.cursor = 4 // dir row: pier
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if gotCmd != "agy" {
+		t.Errorf("launched command = %q, want agy", gotCmd)
 	}
 }

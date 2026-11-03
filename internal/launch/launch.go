@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"pier/internal/claude"
+	"pier/internal/agent"
 	"pier/internal/onboard"
 	"pier/internal/prompt"
 	"pier/internal/setup"
@@ -26,24 +26,24 @@ type Kind int
 
 const (
 	KindLaunch      Kind = iota // no args: the launcher
-	KindPassthrough             // leading -flag: straight to claude
+	KindPassthrough             // leading -flag: straight to the default agent
 	KindHelp
 	KindVersion
 	KindSubcommand // a known pier subcommand
-	KindUnknown    // a bare word pier doesn't know — usage, not claude
+	KindUnknown    // a bare word pier doesn't know — usage, not an agent launch
 )
 
 // subcommands are pier's own verbs; keep in sync with main.go's switch.
 var subcommands = map[string]bool{
-	"setup": true, "alias": true, "run": true, "new": true, "keys": true,
+	"setup": true, "agent": true, "alias": true, "run": true, "new": true, "keys": true,
 	"ensure": true, "toggle": true, "done": true, "reap": true, "hook": true, "status": true,
 	"upgrade": true,
 }
 
-// Classify decides what the arguments mean. Flags go to claude so `pier -r`
-// works like `claude -r` (the alias's whole point), except pier's own
-// -v/-h; unknown bare words are a usage error rather than a claude launch,
-// so typos don't start a session.
+// Classify decides what the arguments mean. Flags go to the default agent so
+// `pier -r` or `pier -c` works directly, except pier's own -v/-h; unknown
+// bare words are a usage error rather than an agent launch, so typos don't
+// start a session.
 func Classify(args []string) Kind {
 	if len(args) == 0 {
 		return KindLaunch
@@ -63,13 +63,21 @@ func Classify(args []string) Kind {
 	return KindUnknown
 }
 
-// Passthrough replaces this process with `claude args...`.
+// Passthrough replaces this process with the configured default agent + args.
 func Passthrough(args []string) error {
-	path, err := exec.LookPath(claude.Bin)
-	if err != nil {
-		return fmt.Errorf("%s not found in PATH", claude.Bin)
+	cfg, _ := onboard.Load(onboard.ConfigPath())
+	avail := agent.Available(cfg.Agents, exec.LookPath)
+	spec := avail[agent.Resolve(cfg.Agent, avail)]
+	cmdArgs := strings.Fields(spec.Command())
+	if len(cmdArgs) == 0 {
+		cmdArgs = []string{spec.Name}
 	}
-	return syscall.Exec(path, append([]string{claude.Bin}, args...), os.Environ())
+	bin := cmdArgs[0]
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return fmt.Errorf("%s not found in PATH", bin)
+	}
+	return syscall.Exec(path, append(cmdArgs, args...), os.Environ())
 }
 
 // Run is bare `pier`: wizard (once) → update check (daily) → tmux block
