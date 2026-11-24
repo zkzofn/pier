@@ -1,4 +1,4 @@
-// pier — a tmux sidebar dashboard for running Claude Code sessions.
+// pier — a sidebar for AI coding sessions (claude, agy, codex, grok), inside tmux.
 package main
 
 import (
@@ -22,9 +22,9 @@ import (
 	"pier/internal/usage"
 )
 
-const version = "1.3.1"
+const version = "1.4.0"
 
-const usageText = `pier %s — tmux sidebar for AI coding sessions (claude, agy, codex, grok)
+const usageText = `pier %s — a sidebar for AI coding sessions (claude, agy, codex, grok), inside tmux
 
 usage:
   pier                      start: outside tmux, pick an open session or a

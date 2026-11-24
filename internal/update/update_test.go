@@ -9,7 +9,7 @@ import (
 )
 
 const formula = `class Pier < Formula
-  desc "Tmux sidebar dashboard for Claude Code sessions"
+  desc "A sidebar for AI coding sessions, inside tmux"
   version "0.12.0"
   url "https://github.com/zkzofn/pier/releases/download/v0.12.0/pier_v0.12.0_darwin_arm64.tar.gz"
 end

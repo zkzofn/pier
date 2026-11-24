@@ -8,6 +8,52 @@ Versions 0.5.0 – 0.8.0, 0.10.0 and 0.11.0 shipped as commits only — they wer
 never cut as GitHub releases, which is why the Releases page jumps from 0.9.0
 to 1.0.0.
 
+## 1.4.0 — 2026-11-24
+
+- **Multi-agent CLI support (`claude`, `agy`, `codex`, `grok`).**
+  - Pick or change the default agent anytime with `pier agent [name]`.
+    `pier` inside tmux and `pier -r` / flags pass through to the configured
+    default agent instead of hardcoding `claude`.
+  - In the new-session picker (`prefix+N` / `+ new session` / outside tmux),
+    press `^A` to cycle installed agents (shown as `[<agent> · ^A]` in the
+    header; `^A` hints stay hidden when only one agent is installed).
+  - Supports custom agent entries via `agents` (`name` + `cmd`) in
+    `~/.config/pier/config.json`; `discover` recognizes both built-in and
+    custom binaries so agent panes are distinct from `$` shell panes.
+  - Antigravity CLI (`agy`) integration: `pier setup` wires 5 lifecycle hooks
+    into `~/.gemini/config/hooks.json`, `pier hook` parses camelCase payloads,
+    the picker includes workspace paths from
+    `~/.gemini/antigravity-cli/history.jsonl`, and sidebar labels fall back
+    to `~/.gemini/antigravity-cli/cache/conversation_metadata.json`.
+  - First-run wizard drops the `cl` shell alias prompt (existing `pier alias`
+    subcommand remains available) and asks for a default agent when multiple
+    are installed; existing configs without `agent` set prompt once on the
+    next `pier` launch while preserving `alias` and custom `agents`.
+- **Status-bar remaining agent usage.**
+  - `pier status` renders the active session agent's remaining quota (e.g.
+    `5h` / `7d` windows, plus `Argon` weekly pool for `agy`) alongside path
+    and git branch.
+  - `pier statusline <agent> [--wrap <cmd>]` caches quota JSON for `claude`
+    and `agy` under `~/.local/state/pier/usage/<agent>.json`, transparently
+    wrapping any existing `statusLine` script. `codex` reads recent rate
+    limits from `~/.codex/sessions/**/rollout-*.jsonl`.
+  - `pier setup` wires `~/.claude/settings.json` and
+    `~/.gemini/antigravity-cli/settings.json` statusLine commands and uses
+    stable symlinked binary paths (`StableSelf` / `PortableBin`).
+- **Sidebar scrolling, multi-agent badges, and locking.**
+  - Long sidebar lists scroll with the mouse wheel and `j`/`k`.
+  - When multiple agent types are running simultaneously, sidebar rows prefix
+    a short badge (`cl:`, `agy:`, `cdx:`, `grk:`).
+  - `EnsureSidebar` locks per session so simultaneous `client-attached` and
+    `client-session-changed` hooks never create duplicate sidebars.
+- **A sidebar is ~15 MB again, not 40 – 90.** Upgraded `x/ansi` to v0.11.8
+  (with `x/cellbuf` v0.0.15) so lipgloss's per-P `sync.Pool` parser uses 4 KB
+  buffers instead of 4 MB. Updated the README memory table with measurement
+  conditions and numbers.
+- **Wording & fixture cleanup.** Updated docs and help text from "a tmux
+  sidebar dashboard" to "a sidebar for AI coding sessions, inside tmux", and
+  replaced real project names in examples and test fixtures with generic names.
+
 ## 1.3.1 — 2026-09-02
 
 - **`^T` checks before it promises.** Claude Code starts fine with
