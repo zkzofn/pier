@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"pier/internal/agent"
@@ -22,7 +23,7 @@ import (
 	"pier/internal/usage"
 )
 
-const version = "1.4.0"
+const version = "1.4.1"
 
 const usageText = `pier %s — a sidebar for AI coding sessions (claude, agy, codex, grok), inside tmux
 
@@ -48,7 +49,7 @@ usage:
                               (tmux pane-exited hook)
   pier hook <event>         agent hook endpoint (reads stdin JSON)
                               events: user-prompt-submit | pre-tool-use |
-                                      stop | permission-request |
+                                      post-tool-use | stop | permission-request |
                                       session-start | session-end
   pier statusline <agent> [--wrap <cmd>]
                               cache agent statusLine quota JSON from stdin
@@ -140,7 +141,12 @@ func subcommand(args []string) error {
 			os.Exit(2)
 		}
 		payload, _ := io.ReadAll(os.Stdin)
-		if state.IsAgyPayload(payload) {
+		switch {
+		case state.IsAgyPreToolUse(payload):
+			// PreToolUse requires an explicit decision; never silently allow
+			// arbitrary tools, and never emit {} which hard-denies all calls.
+			fmt.Println(`{"decision":"ask"}`)
+		case state.IsAgyPayload(payload):
 			fmt.Println("{}")
 		}
 		// Liveness bookkeeping is best-effort: a failed write must never
@@ -273,14 +279,24 @@ func statusLine(path, session, paneID string, width int) string {
 		}
 	}
 	branch := discover.GitBranch(path)
+	return formatStatusRight(usageFrag, short, branch, tmux.IsGreenBg(tmux.StatusBg()))
+}
+
+func formatStatusRight(usageFrag, short, branch string, darkPill bool) string {
 	loc := fmt.Sprintf("#[fg=cyan]%s#[default]", short)
 	if branch != "-" {
 		loc = fmt.Sprintf("#[fg=cyan]%s #[fg=green]⎇ %s#[default]", short, branch)
 	}
-	if usageFrag == "" {
-		return loc
+	out := loc
+	if usageFrag != "" {
+		out = usageFrag + " #[fg=colour244]│#[default] " + loc
 	}
-	return usageFrag + " #[fg=colour244]│#[default] " + loc
+	if !darkPill {
+		return out
+	}
+	inner := strings.TrimSuffix(out, "#[default]")
+	inner = strings.ReplaceAll(inner, "#[default]", "#[fg=default,nobold]")
+	return "#[bg=colour235] " + inner + " #[default]"
 }
 
 func activeSessionAgent(panes []tmux.Pane, session, paneID string, custom []agent.Spec) string {

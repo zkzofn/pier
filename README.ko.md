@@ -61,7 +61,7 @@ pier
 
 먼저 tmux·에이전트 hooks·상태바 사용량 연동을 제안한다 — `pier setup`과 같은 일로:
 - `~/.tmux.conf`에 마커 블록 추가
-- `~/.claude/settings.json`에 hook 6종 병합, `agy` 또는 `~/.gemini`가 있으면 `~/.gemini/config/hooks.json`에 hook 5종 병합
+- `~/.claude/settings.json`에 hook 6종 병합, `agy` 또는 `~/.gemini`가 있으면 `~/.gemini/config/hooks.json`에 hook 4종 병합
 - `~/.claude/settings.json`(기존 `statusLine` 스크립트가 있으면 투명 래핑) 및 `~/.gemini/antigravity-cli/settings.json`에 `pier statusline`을 연결해 tmux 하단 상태바에서 현재 세션 에이전트의 5시간/주간 잔여 사용량을 표시
 
 기존 설정은 보존되고 수정 전 `.bak-pier` 백업을 남기며, 재실행해도 중복되지 않고 tmux 서버가 떠 있으면 즉시 리로드한다. 참고로 `claude`와 `agy`는 시작 시점에만 `statusLine` 설정을 읽으므로, 이미 떠 있는 세션은 재시작해야 상태바 사용량이 갱신된다.
@@ -157,8 +157,7 @@ bind-key N display-popup -E -w 46 -h 22 -T " New session " "~/.local/bin/pier ne
   "pier": {
     "SessionStart": [{ "type": "command", "command": "pier hook session-start", "timeout": 5 }],
     "PreInvocation": [{ "type": "command", "command": "pier hook user-prompt-submit", "timeout": 5 }],
-    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook pre-tool-use", "timeout": 5 }] }],
-    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook pre-tool-use", "timeout": 5 }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook post-tool-use", "timeout": 5 }] }],
     "Stop": [{ "type": "command", "command": "pier hook stop", "timeout": 5 }]
   }
 }

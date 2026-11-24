@@ -158,8 +158,7 @@ Add under `"pier"` in `~/.gemini/config/hooks.json`:
   "pier": {
     "SessionStart": [{ "type": "command", "command": "pier hook session-start", "timeout": 5 }],
     "PreInvocation": [{ "type": "command", "command": "pier hook user-prompt-submit", "timeout": 5 }],
-    "PreToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook pre-tool-use", "timeout": 5 }] }],
-    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook pre-tool-use", "timeout": 5 }] }],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "pier hook post-tool-use", "timeout": 5 }] }],
     "Stop": [{ "type": "command", "command": "pier hook stop", "timeout": 5 }]
   }
 }

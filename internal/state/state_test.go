@@ -11,6 +11,7 @@ func TestForEvent(t *testing.T) {
 	cases := map[string]string{
 		"user-prompt-submit": Working,
 		"pre-tool-use":       Working,
+		"post-tool-use":      Working,
 		"stop":               Waiting,
 		"permission-request": Permission,
 		"session-start":      Waiting,
@@ -244,5 +245,17 @@ func TestRecordAgyPayload(t *testing.T) {
 	}
 	if st.State != Working || st.SessionID != "conv-99" || st.CWD != "/Users/j/dev/pier" || st.LastPrompt != "implement multi-agent support" {
 		t.Errorf("unexpected agy state: %+v", st)
+	}
+}
+
+func TestIsAgyPreToolUse(t *testing.T) {
+	if !IsAgyPreToolUse([]byte(`{"conversationId":"conv-1","hookEventName":"PreToolUse"}`)) {
+		t.Error("expected IsAgyPreToolUse true for agy PreToolUse")
+	}
+	if IsAgyPreToolUse([]byte(`{"conversationId":"conv-1","hookEventName":"PostToolUse"}`)) {
+		t.Error("expected IsAgyPreToolUse false for agy PostToolUse")
+	}
+	if IsAgyPreToolUse([]byte(`{"session_id":"s1","hook_event_name":"PreToolUse"}`)) {
+		t.Error("expected IsAgyPreToolUse false for Claude payload")
 	}
 }

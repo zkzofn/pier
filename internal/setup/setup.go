@@ -535,10 +535,15 @@ func AgyHooks(path, self string) (string, error) {
 		return "", err
 	}
 
+	var migrated bool
 	if existing, ok := root["pier"]; ok {
-		if raw, _ := json.Marshal(existing); strings.Contains(string(raw), "pier hook") {
+		raw, _ := json.Marshal(existing)
+		hasPierHook := strings.Contains(string(raw), "pier hook")
+		hasPreToolUse := strings.Contains(string(raw), `"PreToolUse"`)
+		if hasPierHook && !hasPreToolUse {
 			return "agy hooks: already configured — skipped", nil
 		}
+		migrated = hasPierHook && hasPreToolUse
 	}
 
 	handler := func(arg string) map[string]any {
@@ -551,13 +556,9 @@ func AgyHooks(path, self string) (string, error) {
 	root["pier"] = map[string]any{
 		"SessionStart":  []any{handler("session-start")},
 		"PreInvocation": []any{handler("user-prompt-submit")},
-		"PreToolUse": []any{map[string]any{
-			"matcher": "*",
-			"hooks":   []any{handler("pre-tool-use")},
-		}},
 		"PostToolUse": []any{map[string]any{
 			"matcher": "*",
-			"hooks":   []any{handler("pre-tool-use")},
+			"hooks":   []any{handler("post-tool-use")},
 		}},
 		"Stop": []any{handler("stop")},
 	}
@@ -575,7 +576,10 @@ func AgyHooks(path, self string) (string, error) {
 	if err := writeAtomicMode(path, append(out, '\n'), 0o600); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("agy hooks: 5 event(s) wired (backup: %s.bak-pier)", filepath.Base(path)), nil
+	if migrated {
+		return "agy hooks: updated (removed PreToolUse)", nil
+	}
+	return fmt.Sprintf("agy hooks: 4 event(s) wired (backup: %s.bak-pier)", filepath.Base(path)), nil
 }
 
 // AgyStatusLine configures Antigravity CLI's statusLine in

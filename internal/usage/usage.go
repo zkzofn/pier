@@ -458,6 +458,9 @@ func FormatTmux(snap Snapshot, now time.Time, compact bool) string {
 	for _, b := range snap.Buckets {
 		pct := int(math.Round(clampPct(b.RemainingPct)))
 		s := colorFor(b.RemainingPct, stale) + fmt.Sprintf("%s:%d%%", b.Label, pct)
+		if b.RemainingPct < 20 && !stale {
+			s += "#[nobold]"
+		}
 		if !compact && b.ResetAt > now.Unix() && (b.ResetAt-now.Unix() < 24*3600 || len(snap.Buckets) <= 2) {
 			rem := time.Duration(b.ResetAt-now.Unix()) * time.Second
 			s += "#[fg=colour244](" + formatDuration(rem) + ")"

@@ -326,8 +326,8 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "5 event(s) wired") {
-		t.Errorf("want 5 events wired, got %q", msg)
+	if !strings.Contains(msg, "4 event(s) wired") {
+		t.Errorf("want 4 events wired, got %q", msg)
 	}
 	data, _ := os.ReadFile(path)
 	var root map[string]any
@@ -338,10 +338,13 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 		t.Error("existing named hook lost")
 	}
 	pierBlock, _ := json.Marshal(root["pier"])
-	for _, ev := range []string{"SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop", "pier hook"} {
+	for _, ev := range []string{"SessionStart", "PreInvocation", "PostToolUse", "Stop", "pier hook post-tool-use"} {
 		if !strings.Contains(string(pierBlock), ev) {
 			t.Errorf("pier hook block missing %q: %s", ev, pierBlock)
 		}
+	}
+	if strings.Contains(string(pierBlock), "PreToolUse") {
+		t.Errorf("pier hook block must not contain PreToolUse: %s", pierBlock)
 	}
 	if _, err := os.Stat(path + ".bak-pier"); err != nil {
 		t.Error("backup not written")
@@ -353,6 +356,55 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 	}
 	if !strings.Contains(msg, "skipped") {
 		t.Errorf("want skipped on re-run, got %q", msg)
+	}
+}
+
+func TestAgyHooksMigratesLegacyPreToolUse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	legacy := `{
+  "other-hook": {
+    "Stop": [{"type": "command", "command": "/bin/true"}]
+  },
+  "pier": {
+    "SessionStart": [{"type": "command", "command": "pier hook session-start", "timeout": 5}],
+    "PreInvocation": [{"type": "command", "command": "pier hook user-prompt-submit", "timeout": 5}],
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "pier hook pre-tool-use", "timeout": 5}]}],
+    "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "pier hook pre-tool-use", "timeout": 5}]}],
+    "Stop": [{"type": "command", "command": "pier hook stop", "timeout": 5}]
+  }
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := AgyHooks(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "updated") {
+		t.Errorf("want updated message, got %q", msg)
+	}
+	data, _ := os.ReadFile(path)
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	if root["other-hook"] == nil {
+		t.Error("existing named hook lost during migration")
+	}
+	pierBlock, _ := json.Marshal(root["pier"])
+	if strings.Contains(string(pierBlock), "PreToolUse") {
+		t.Errorf("PreToolUse still present after migration: %s", pierBlock)
+	}
+	if !strings.Contains(string(pierBlock), "pier hook post-tool-use") {
+		t.Errorf("PostToolUse missing post-tool-use command: %s", pierBlock)
+	}
+	// Second run must now skip.
+	msg, err = AgyHooks(path, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "skipped") {
+		t.Errorf("want skipped after migration, got %q", msg)
 	}
 }
 

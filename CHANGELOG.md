@@ -8,6 +8,25 @@ Versions 0.5.0 – 0.8.0, 0.10.0 and 0.11.0 shipped as commits only — they wer
 never cut as GitHub releases, which is why the Releases page jumps from 0.9.0
 to 1.0.0.
 
+## 1.4.1 — 2026-11-24
+
+- **Readable status bar on default green tmux theme.**
+  - `pier status` now detects when tmux's effective `status-right` background
+    is green (the default `bg=green,fg=black`) and wraps the right-side
+    fragment in a dark charcoal pill (`#[bg=colour235] ... #[default]`) so
+    `>= 50%` green usage numbers and `⎇ branch` stay legible; custom
+    non-green tmux themes keep their existing output unchanged.
+  - Cleared `bold` right after `<20%` red buckets (`#[nobold]`) so bold does
+    not bleed into the reset timer or subsequent buckets.
+- **Fix Antigravity (`agy`) tool calls being denied by `PreToolUse` hook.**
+  - Removed `PreToolUse` from `pier setup`'s Antigravity hook block in
+    `~/.gemini/config/hooks.json` (Antigravity requires an explicit
+    `decision` field and hard-denies `{}` responses) and switched
+    `PostToolUse` to `pier hook post-tool-use`.
+  - `pier setup` automatically migrates existing 1.4.0 `"pier"` hook blocks
+    to remove `PreToolUse`, and `pier hook` returns `{"decision":"ask"}`
+    as a fallback if a legacy `PreToolUse` payload arrives.
+
 ## 1.4.0 — 2026-11-24
 
 - **Multi-agent CLI support (`claude`, `agy`, `codex`, `grok`).**

@@ -38,3 +38,34 @@ func TestSidebarOnlySessions(t *testing.T) {
 		t.Errorf("no panes -> nothing to reap, got %v", got)
 	}
 }
+
+func TestParseStatusBg(t *testing.T) {
+	cases := []struct {
+		statusStyle      string
+		statusRightStyle string
+		want             string
+	}{
+		{"bg=green,fg=black", "default", "green"},
+		{"bg=colour235,fg=white", "default", "colour235"},
+		{"bg=green,fg=black", "bg=black", "black"},
+		{"", "", ""},
+	}
+	for _, tc := range cases {
+		if got := ParseStatusBg(tc.statusStyle, tc.statusRightStyle); got != tc.want {
+			t.Errorf("ParseStatusBg(%q, %q) = %q, want %q", tc.statusStyle, tc.statusRightStyle, got, tc.want)
+		}
+	}
+}
+
+func TestIsGreenBg(t *testing.T) {
+	for _, bg := range []string{"green", "colour2", "color2", "brightgreen", "colour10", "color10", " GREEN "} {
+		if !IsGreenBg(bg) {
+			t.Errorf("IsGreenBg(%q) = false, want true", bg)
+		}
+	}
+	for _, bg := range []string{"black", "colour235", "default", "", "#1e1e2e"} {
+		if IsGreenBg(bg) {
+			t.Errorf("IsGreenBg(%q) = true, want false", bg)
+		}
+	}
+}

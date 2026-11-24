@@ -179,7 +179,7 @@ func TestFormatTmux(t *testing.T) {
 		},
 	}
 	full := FormatTmux(snap, now, false)
-	for _, want := range []string{"#[fg=magenta]claude", "#[fg=green]5h:65%", "(2h10m)", "#[fg=red,bold]7d:18%", "(3d4h)", "#[default]"} {
+	for _, want := range []string{"#[fg=magenta]claude", "#[fg=green]5h:65%", "(2h10m)", "#[fg=red,bold]7d:18%#[nobold]", "(3d4h)", "#[default]"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("full format missing %q in %q", want, full)
 		}

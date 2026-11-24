@@ -179,6 +179,52 @@ func SidebarOnlySessions(panes []Pane) []string {
 	return out
 }
 
+// StatusBg queries tmux for the effective status-right background color.
+// Returns "" on error or outside tmux.
+func StatusBg() string {
+	out, err := run("display-message", "-p", "#{status-style}\t#{status-right-style}")
+	if err != nil {
+		return ""
+	}
+	parts := strings.SplitN(out, "\t", 2)
+	if len(parts) < 2 {
+		return ParseStatusBg(parts[0], "")
+	}
+	return ParseStatusBg(parts[0], parts[1])
+}
+
+// ParseStatusBg extracts the effective status-right background from tmux's
+// status-style and status-right-style strings.
+func ParseStatusBg(statusStyle, statusRightStyle string) string {
+	if bg := extractStyleBg(statusRightStyle); bg != "" && !strings.EqualFold(bg, "default") {
+		return bg
+	}
+	return extractStyleBg(statusStyle)
+}
+
+func extractStyleBg(style string) string {
+	var bg string
+	for _, tok := range strings.FieldsFunc(style, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	}) {
+		if len(tok) > 3 && strings.EqualFold(tok[:3], "bg=") {
+			bg = strings.TrimSpace(tok[3:])
+		}
+	}
+	return bg
+}
+
+// IsGreenBg reports whether bg names tmux's default green status background
+// (or a green 16-color variant) where green foreground text becomes unreadable.
+func IsGreenBg(bg string) bool {
+	switch strings.ToLower(strings.TrimSpace(bg)) {
+	case "green", "brightgreen", "colour2", "color2", "colour10", "color10":
+		return true
+	default:
+		return false
+	}
+}
+
 // NewSessionDetached creates a detached session at path running command
 // (empty: tmux's default shell) without touching any client. Starts the
 // server if none is running.

@@ -56,7 +56,7 @@ func Dir() string {
 // ForEvent maps a pier hook event name to a pane state ("" = ignore).
 func ForEvent(event string) string {
 	switch event {
-	case "user-prompt-submit", "pre-tool-use":
+	case "user-prompt-submit", "pre-tool-use", "post-tool-use":
 		return Working
 	case "stop":
 		return Waiting
@@ -99,6 +99,16 @@ func IsAgyPayload(payload []byte) bool {
 		ConversationID string `json:"conversationId"`
 	}
 	return json.Unmarshal(payload, &m) == nil && m.ConversationID != ""
+}
+
+// IsAgyPreToolUse reports whether raw stdin JSON is an Antigravity PreToolUse
+// hook event, which requires an explicit decision field on stdout.
+func IsAgyPreToolUse(payload []byte) bool {
+	var m struct {
+		ConversationID string `json:"conversationId"`
+		HookEventName  string `json:"hookEventName"`
+	}
+	return json.Unmarshal(payload, &m) == nil && m.ConversationID != "" && m.HookEventName == "PreToolUse"
 }
 
 func fileFor(dir, paneID string) string {
