@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -226,10 +227,7 @@ func Attach(session string) error {
 	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT)
 	defer signal.Reset(syscall.SIGINT, syscall.SIGQUIT)
 	if err := cmd.Run(); err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			return nil // tmux printed its own message
-		}
-		return err
+		return fmt.Errorf("tmux attach %s: %w", session, err)
 	}
 	if ServerAlive() {
 		return nil
@@ -305,6 +303,9 @@ func EnsureSidebar(session, self string) error {
 	if session == "" {
 		return fmt.Errorf("no target session (not inside tmux?)")
 	}
+	if unlock := lockEnsure(session); unlock != nil {
+		defer unlock()
+	}
 	if sidebarPaneIn(session) != "" {
 		return nil
 	}
@@ -315,6 +316,30 @@ func EnsureSidebar(session, self string) error {
 	}
 	_, err = run("set-option", "-p", "-t", paneID, "@pier", "1")
 	return err
+}
+
+func lockEnsure(session string) func() {
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, session)
+	if safe == "" {
+		safe = "default"
+	}
+	f, err := os.OpenFile(filepath.Join(os.TempDir(), "pier-ensure-"+safe+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
 }
 
 // RestoreWidth resizes a pane back to the fixed sidebar width. Multi-client

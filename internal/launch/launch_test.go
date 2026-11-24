@@ -15,6 +15,7 @@ func TestClassify(t *testing.T) {
 		{[]string{"-h"}, KindHelp}, {[]string{"--help"}, KindHelp}, {[]string{"help"}, KindHelp},
 		{[]string{"setup"}, KindSubcommand}, {[]string{"new"}, KindSubcommand}, {[]string{"agent"}, KindSubcommand}, {[]string{"agent", "agy"}, KindSubcommand}, {[]string{"alias", "cl"}, KindSubcommand},
 		{[]string{"reap"}, KindSubcommand}, {[]string{"upgrade"}, KindSubcommand}, {[]string{"hook", "stop"}, KindSubcommand},
+		{[]string{"statusline", "claude"}, KindSubcommand},
 		{[]string{"setpu"}, KindUnknown}, {[]string{"mcp"}, KindUnknown},
 	}
 	for _, c := range cases {

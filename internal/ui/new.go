@@ -651,7 +651,10 @@ func (m pickerModel) hint() string {
 // session to name; a hint for a key that does nothing costs the whole line
 // its credibility.
 func (m pickerModel) keysHint() string {
-	keys := []string{"^A: agent"}
+	var keys []string
+	if len(m.agents) > 1 {
+		keys = append(keys, "^A: agent")
+	}
 	if m.currentAgent().Name == "claude" {
 		keys = append(keys, "^T: telegram")
 	}
@@ -660,7 +663,7 @@ func (m pickerModel) keysHint() string {
 		keys = append(keys, "Tab: name")
 		hasTab = true
 	}
-	if hasTab && m.currentAgent().Name == "claude" {
+	if hasTab && m.currentAgent().Name == "claude" && len(m.agents) > 1 {
 		keys = append(keys, "Esc")
 	} else {
 		keys = append(keys, "Esc: close")
@@ -698,7 +701,11 @@ func (m pickerModel) View() string {
 	}
 
 	head := " " + stylePrompt.Render("> ") + m.query + "█"
-	badge := styleHint.Render("[" + ag + " · ^A]")
+	badgeText := "[" + ag + " · ^A]"
+	if len(m.agents) <= 1 {
+		badgeText = "[" + ag + "]"
+	}
+	badge := styleHint.Render(badgeText)
 	if m.telegram {
 		badge = styleTg.Render("telegram ✓") + " " + badge
 	}
@@ -725,7 +732,7 @@ func (m pickerModel) View() string {
 			// reset would otherwise cut the cursor's bold short. The current
 			// session wears the sidebar's marks: ▌ and styleCurrent on its
 			// name — which stays put under the cursor, where ▸ takes over.
-			_, icon := paneIcon(r.open.Pane, m.states)
+			_, icon := paneIcon(r.open.Pane, m.states, m.agents)
 			prefix, name := "  ", r.open.Session
 			if r.open.Here {
 				prefix, name = "▌ ", styleCurrent.Render(name)

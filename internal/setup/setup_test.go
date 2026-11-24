@@ -21,7 +21,7 @@ func TestTmuxConfCreatesAndSkips(t *testing.T) {
 		t.Errorf("want added, got %q", msg)
 	}
 	data, _ := os.ReadFile(path)
-	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}"`, "bind-key N display-popup", "set -g detach-on-destroy off", self + ` reap"'`} {
+	for _, want := range []string{markerBegin, markerEnd, self + " ensure", self + ` status "#{pane_current_path}" "#{session_name}" "#{pane_id}" "#{client_width}"`, "status-right-length 140", "bind-key N display-popup", "set -g detach-on-destroy off", self + ` reap"'`} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config missing %q", want)
 		}
@@ -326,8 +326,8 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "4 event(s) wired") {
-		t.Errorf("want 4 events wired, got %q", msg)
+	if !strings.Contains(msg, "5 event(s) wired") {
+		t.Errorf("want 5 events wired, got %q", msg)
 	}
 	data, _ := os.ReadFile(path)
 	var root map[string]any
@@ -338,7 +338,7 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 		t.Error("existing named hook lost")
 	}
 	pierBlock, _ := json.Marshal(root["pier"])
-	for _, ev := range []string{"SessionStart", "PreInvocation", "PostToolUse", "Stop", "pier hook"} {
+	for _, ev := range []string{"SessionStart", "PreInvocation", "PreToolUse", "PostToolUse", "Stop", "pier hook"} {
 		if !strings.Contains(string(pierBlock), ev) {
 			t.Errorf("pier hook block missing %q: %s", ev, pierBlock)
 		}
@@ -353,5 +353,91 @@ func TestAgyHooksFromScratchAndMerge(t *testing.T) {
 	}
 	if !strings.Contains(msg, "skipped") {
 		t.Errorf("want skipped on re-run, got %q", msg)
+	}
+}
+
+func TestStableSelf(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	cellarBinDir := filepath.Join(dir, "Cellar", "pier", "1.3.1", "bin")
+	_ = os.MkdirAll(binDir, 0o755)
+	_ = os.MkdirAll(cellarBinDir, 0o755)
+	cellarBin := filepath.Join(cellarBinDir, "pier")
+	linkedBin := filepath.Join(binDir, "pier")
+	_ = os.WriteFile(cellarBin, []byte("#!/bin/sh\n"), 0o755)
+	if err := os.Symlink("../Cellar/pier/1.3.1/bin/pier", linkedBin); err != nil {
+		t.Fatal(err)
+	}
+	if got := StableSelf(cellarBin); got != linkedBin {
+		t.Errorf("StableSelf(%q) = %q, want %q", cellarBin, got, linkedBin)
+	}
+	if got := StableSelf("/Users/me/.local/bin/pier"); got != "/Users/me/.local/bin/pier" {
+		t.Errorf("non-Cellar path changed: %q", got)
+	}
+}
+
+func TestClaudeStatusLineWrapsExistingAndIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	existing := `{"model":"opus","statusLine":{"type":"command","command":"sh ~/.claude/statusline-command.sh"}}`
+	_ = os.WriteFile(path, []byte(existing), 0o644)
+
+	msg, err := ClaudeStatusLine(path, "pier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "wrapped") {
+		t.Errorf("want wrapped message, got %q", msg)
+	}
+	var s map[string]any
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	sl := s["statusLine"].(map[string]any)
+	want := "pier statusline claude --wrap 'sh ~/.claude/statusline-command.sh'"
+	if sl["command"] != want {
+		t.Errorf("command = %q, want %q", sl["command"], want)
+	}
+
+	msg, err = ClaudeStatusLine(path, "pier")
+	if err != nil || !strings.Contains(msg, "skipped") {
+		t.Errorf("second run should skip, got %q %v", msg, err)
+	}
+}
+
+func TestAgyStatusLineFromScratchAndWrap(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	msg, err := AgyStatusLine(path, "pier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "wired") {
+		t.Errorf("want wired, got %q", msg)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("agy settings.json mode = %v, want 0600 (err=%v)", info.Mode().Perm(), err)
+	}
+	var s map[string]any
+	data, _ := os.ReadFile(path)
+	_ = json.Unmarshal(data, &s)
+	sl := s["statusLine"].(map[string]any)
+	if sl["command"] != "pier statusline agy" || sl["stack_with_default"] != true {
+		t.Errorf("unexpected agy statusLine: %+v", sl)
+	}
+
+	// Wrapping an existing custom statusLine preserves extra properties.
+	wrapPath := filepath.Join(dir, "wrap.json")
+	_ = os.WriteFile(wrapPath, []byte(`{"statusLine":{"type":"command","command":"~/bin/my.sh","padding":1,"stack_with_default":false}}`), 0o600)
+	msg, err = AgyStatusLine(wrapPath, "pier")
+	if err != nil || !strings.Contains(msg, "wrapped") {
+		t.Fatalf("wrap failed: %q %v", msg, err)
+	}
+	data, _ = os.ReadFile(wrapPath)
+	_ = json.Unmarshal(data, &s)
+	sl = s["statusLine"].(map[string]any)
+	if sl["command"] != "pier statusline agy --wrap '~/bin/my.sh'" || sl["padding"] != float64(1) || sl["stack_with_default"] != false {
+		t.Errorf("wrapped agy statusLine lost properties: %+v", sl)
 	}
 }

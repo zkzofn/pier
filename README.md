@@ -2,8 +2,8 @@
 
 [한국어](README.ko.md)
 
-**A tmux sidebar dashboard for Claude Code sessions.** A pier where your sessions dock.
-See every running Claude Code session at a glance — which worktree and branch each one is on, whether it's working or waiting for you — and jump to any of them with a single click. Your tmux workflow stays exactly as it is, at **8 MB** per sidebar.
+**A tmux sidebar dashboard for AI coding sessions (`claude`, `agy`, `codex`, `grok`).** A pier where your sessions dock.
+See every running agent session at a glance — which worktree and branch each one is on, whether it's working or waiting for you — and jump to any of them with a single click. Your tmux workflow stays exactly as it is, at **8 MB** per sidebar.
 
 ```
 +----------------------+-------------------------------------+
@@ -19,13 +19,13 @@ See every running Claude Code session at a glance — which worktree and branch 
  [session]                     [~/dev/suite2 (feat/nmt) 13:53]
 ```
 
-- **Sidebar**: every running Claude Code instance across all tmux sessions, grouped by worktree (path + branch). Items show the conversation's AI-generated title, falling back to the tmux session name. Sessions with no Claude Code pane at all are listed too, marked `$` — terminal sessions stay visible and jumpable
+- **Sidebar**: every running AI CLI instance (`claude`, `agy`, `codex`, `grok`) across all tmux sessions, grouped by worktree (path + branch). Items show the current prompt or conversation title, falling back to the tmux session name. Sessions with no agent pane at all are listed too, marked `$` — terminal sessions stay visible and jumpable
 - **Status icons**: `●` working / `○` waiting for your input / `!` waiting for permission approval / `·` unknown / `$` terminal session (a plain shell)
 - **Jump**: click an item to focus it — even across tmux sessions
-- **Status bar**: the current pane's path + git branch, always visible (`detached@sha` on a detached HEAD)
+- **Status bar**: shows the current session's active agent remaining quota (e.g., `5h` / `7d` windows) alongside the current pane's path + git branch (`detached@sha` on a detached HEAD)
 - **Auto-attach**: the sidebar appears on its own when you attach to or switch into a session
-- **`pier` is the front door**: outside tmux it opens the picker and attaches to whatever you pick; inside tmux it runs `claude` in the current pane; `pier -r` and friends pass straight through to `claude`. The first run offers to wire tmux and the hooks and to add a shell alias (`cl` by default). Once a day it checks the Homebrew tap for a newer pier and offers to upgrade
-- **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — the picker lists your running sessions first, the one you are in on top and marked `▌`, then directories. It creates, it never switches (that is the sidebar's job): `Enter` on a running session starts another Claude Code session in that session's directory, `Enter` on a directory starts one there — named after the directory, with a `-2`, `-3`, … suffix when the name is taken. `^S` instead of `Enter` starts a terminal session (a plain shell, no Claude Code) at the row — for when you want a terminal without splitting a pane or opening a new window. Picker keys are pressed inside the popup itself, no prefix, and every key acts on the highlighted `▸` row; the cursor starts on your current session, so `prefix+N` `Enter` is "one more Claude Code here". Outside tmux, plain `pier` opens the same picker in your terminal, where `Enter` on a running session attaches to it instead
+- **`pier` is the front door**: outside tmux it opens the picker and attaches to whatever you pick; inside tmux it runs your configured default agent (`pier agent`) in the current pane; `pier -r` and friends pass straight through to the default agent. The first run offers to wire tmux and agent hooks (`~/.claude/settings.json`, `~/.gemini/config/hooks.json`) plus statusLine quota caching, and lets you choose a default agent (`claude`, `agy`, `codex`, `grok`). Once a day it checks the Homebrew tap for a newer pier and offers to upgrade
+- **New session**: click `+ new session`, press `n` in the sidebar, or `prefix+N` from anywhere — the picker lists your running sessions first, the one you are in on top and marked `▌`, then directories. It creates, it never switches (that is the sidebar's job): `Enter` on a running session starts another agent session in that session's directory, `Enter` on a directory starts one there — named after the directory, with a `-2`, `-3`, … suffix when the name is taken. Press `^A` to cycle between installed agents (`claude`, `agy`, `codex`, `grok`), or `^S` instead of `Enter` to start a terminal session (a plain shell) at the row. Picker keys are pressed inside the popup itself, no prefix, and every key acts on the highlighted `▸` row; the cursor starts on your current session, so `prefix+N` `Enter` is "one more agent here". Outside tmux, plain `pier` opens the same picker in your terminal, where `Enter` on a running session attaches to it instead
 - **Resume**: a Claude Code session lost to a crash, power loss, or OS shutdown isn't gone — its directory grows a `↻ resume` button in the picker. `→` then `Enter` continues that conversation under its old session name; plain `Enter` starts blank and keeps the offer around. With any casualties present, an `↻ restore all` row rebuilds the whole pre-shutdown layout in one stroke
 - **Telegram**: `^T` in the picker (a `telegram ✓` badge shows it's on) starts the session with Claude Code's telegram channel attached. `^T` first checks that the plugin is enabled and a bot token is configured and otherwise says what's missing (`/plugin`, `/telegram:configure`) — Claude Code itself would start fine and just never attach the channel. Plugin caveat (0.0.7): one Claude Code session at a time holds the bot, and any new Claude Code session with the plugin enabled takes it over
 - **Update notice**: while the Homebrew tap carries a newer pier, every sidebar shows an `↑ <version> · pier upgrade` line at the bottom
@@ -33,7 +33,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) — the thing being dashboarded
+- At least one supported AI coding CLI ([Claude Code](https://claude.com/claude-code), [Antigravity CLI](https://antigravity.google) `agy`, `codex`, or `grok`)
 - tmux 3.2+ (developed and verified on 3.6a; installed automatically with Homebrew)
 - Go 1.24+ only when building from source — the Homebrew install ships a prebuilt binary
 - Developed and verified on macOS. Linux should work but is unverified.
@@ -43,6 +43,7 @@ See every running Claude Code session at a glance — which worktree and branch 
 ### Homebrew
 
 ```sh
+brew tap zkzofn/tap
 brew install zkzofn/tap/pier
 pier
 ```
@@ -58,16 +59,12 @@ pier
 
 The first `pier` run is a short wizard.
 
-It offers to wire tmux and Claude Code — the same thing as `pier setup`: a
-marked block appended to `~/.tmux.conf` and six hook entries merged into
-`~/.claude/settings.json`. Existing settings are preserved, a `.bak-pier`
-backup of `settings.json` is written first, re-running never duplicates
-anything, and a running tmux server is reloaded on the spot.
+It offers to wire tmux, agent hooks, and status-bar quota caching — the same thing as `pier setup`:
+- a marked block appended to `~/.tmux.conf`
+- hook entries merged into `~/.claude/settings.json` and `~/.gemini/config/hooks.json` (when `agy` is installed)
+- `statusLine` configured in `~/.claude/settings.json` (wrapping any existing `statusLine` script transparently) and `~/.gemini/antigravity-cli/settings.json` so the tmux status bar displays remaining 5-hour / weekly quotas for the active session's agent
 
-Then it offers a shell alias — `cl` by default — written as a marked block
-into your login shell's startup file (`~/.zshrc`, `~/.bash_profile` on macOS /
-`~/.bashrc` on Linux, or fish's `config.fish`). Say `n` to either and run
-`pier setup` / `pier alias <name>` whenever you like.
+Existing settings are preserved, a `.bak-pier` backup is written before the first modification, re-running never duplicates anything, and a running tmux server is reloaded on the spot. When multiple agents are installed on `PATH`, the wizard also lets you pick the default agent (`pier agent <name>` changes it later).
 
 After an upgrade, the first `pier` run refreshes pier's block in
 `~/.tmux.conf` and reloads tmux (`tmux.conf: pier block updated`). The block
@@ -110,8 +107,8 @@ set -g mouse on
 set -g detach-on-destroy off
 
 set -g status-interval 5
-set -g status-right-length 60
-set -g status-right '#(~/.local/bin/pier status "#{pane_current_path}") %H:%M '
+set -g status-right-length 140
+set -g status-right '#(~/.local/bin/pier status "#{pane_current_path}" "#{session_name}" "#{pane_id}" "#{client_width}") %H:%M '
 
 # Auto-create the sidebar on attach / session switch (no-op if it exists)
 set-hook -g client-attached 'run-shell "~/.local/bin/pier ensure"'

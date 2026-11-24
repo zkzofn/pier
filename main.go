@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
+	"pier/internal/agent"
 	"pier/internal/discover"
 	"pier/internal/launch"
 	"pier/internal/onboard"
@@ -16,6 +19,7 @@ import (
 	"pier/internal/state"
 	"pier/internal/tmux"
 	"pier/internal/ui"
+	"pier/internal/usage"
 )
 
 const version = "1.3.1"
@@ -46,11 +50,15 @@ usage:
                               events: user-prompt-submit | pre-tool-use |
                                       stop | permission-request |
                                       session-start | session-end
-  pier status <path>        print "path ⎇ branch" for tmux status-right
+  pier statusline <agent> [--wrap <cmd>]
+                              cache agent statusLine quota JSON from stdin
+                              (optionally wrapping an existing script)
+  pier status <path> [session] [pane] [width]
+                              print usage + "path ⎇ branch" for tmux status-right
   pier version              print version
 `
 
-func usage() {
+func printUsage() {
 	fmt.Fprintf(os.Stderr, usageText, version)
 }
 
@@ -63,13 +71,13 @@ func main() {
 	case launch.KindPassthrough:
 		err = launch.Passthrough(args)
 	case launch.KindHelp:
-		usage()
+		printUsage()
 		return
 	case launch.KindVersion:
 		fmt.Println(version)
 		return
 	case launch.KindUnknown:
-		usage()
+		printUsage()
 		os.Exit(2)
 	case launch.KindSubcommand:
 		err = subcommand(args)
@@ -128,7 +136,7 @@ func subcommand(args []string) error {
 		return nil
 	case "hook":
 		if len(args) < 2 {
-			usage()
+			printUsage()
 			os.Exit(2)
 		}
 		payload, _ := io.ReadAll(os.Stdin)
@@ -144,12 +152,39 @@ func subcommand(args []string) error {
 			_ = resume.RecordEnd(resume.Dir(), payload)
 		}
 		return state.Record(state.Dir(), args[1], payload)
-	case "status":
+	case "statusline":
 		if len(args) < 2 {
-			usage()
+			printUsage()
 			os.Exit(2)
 		}
-		fmt.Print(statusLine(args[1]))
+		agentName := args[1]
+		wrapCmd := ""
+		for i := 2; i < len(args); i++ {
+			if args[i] == "--wrap" && i+1 < len(args) {
+				wrapCmd = args[i+1]
+				i++
+			}
+		}
+		return usage.RunStatusLine(agentName, wrapCmd, usage.Dir(), os.Stdin, os.Stdout, os.Stderr)
+	case "status":
+		if len(args) < 2 {
+			printUsage()
+			os.Exit(2)
+		}
+		var session, paneID string
+		width := 120
+		if len(args) >= 3 {
+			session = args[2]
+		}
+		if len(args) >= 4 {
+			paneID = args[3]
+		}
+		if len(args) >= 5 {
+			if w, err := strconv.Atoi(args[4]); err == nil && w > 0 {
+				width = w
+			}
+		}
+		fmt.Print(statusLine(args[1], session, paneID, width))
 	}
 	return nil
 }
@@ -180,7 +215,7 @@ func self() string {
 	if err != nil {
 		return "pier"
 	}
-	return exe
+	return setup.StableSelf(exe)
 }
 
 // doneCmd kills the current session after switching the client to the next
@@ -207,14 +242,62 @@ func doneCmd() error {
 	return tmux.KillSession(cur)
 }
 
-// statusLine renders a colored "path ⎇ branch" fragment for tmux status-right.
-func statusLine(path string) string {
-	short := discover.ShortPath(path)
-	branch := discover.GitBranch(path)
-	if branch == "-" {
-		return fmt.Sprintf("#[fg=cyan]%s#[default]", short)
+// statusLine renders active agent usage (when an agent runs in session) plus
+// a colored "path ⎇ branch" fragment for tmux status-right.
+func statusLine(path, session, paneID string, width int) string {
+	now := time.Now()
+	compact := width > 0 && width < 100
+	var usageFrag string
+
+	if session != "" {
+		if panes, err := tmux.ListPanes(); err == nil {
+			cfg, _ := onboard.Load(onboard.ConfigPath())
+			ag := activeSessionAgent(panes, session, paneID, cfg.Agents)
+			if ag != "" {
+				home, _ := os.UserHomeDir()
+				if snap, ok := usage.Load(usage.Dir(), home, ag, now); ok {
+					usageFrag = usage.FormatTmux(snap, now, compact)
+				}
+			}
+		}
 	}
-	return fmt.Sprintf("#[fg=cyan]%s #[fg=green]⎇ %s#[default]", short, branch)
+
+	short := discover.ShortPath(path)
+	if usageFrag != "" && width > 0 && width < 110 {
+		home, _ := os.UserHomeDir()
+		if path != home {
+			base := filepath.Base(path)
+			if base != "" && base != "." {
+				short = base
+			}
+		}
+	}
+	branch := discover.GitBranch(path)
+	loc := fmt.Sprintf("#[fg=cyan]%s#[default]", short)
+	if branch != "-" {
+		loc = fmt.Sprintf("#[fg=cyan]%s #[fg=green]⎇ %s#[default]", short, branch)
+	}
+	if usageFrag == "" {
+		return loc
+	}
+	return usageFrag + " #[fg=colour244]│#[default] " + loc
+}
+
+func activeSessionAgent(panes []tmux.Pane, session, paneID string, custom []agent.Spec) string {
+	if paneID != "" {
+		for _, p := range panes {
+			if p.ID == paneID && !p.Sidebar {
+				if ag := discover.AgentNameWithCustom(p.Command, custom); ag != "" {
+					return ag
+				}
+				break
+			}
+		}
+	}
+	if rep, ok := discover.RepresentativeWithCustom(panes, session, custom); ok {
+		return discover.AgentNameWithCustom(rep.Command, custom)
+	}
+	return ""
 }
 
 // reapCmd kills every session left with only a sidebar pane. It runs from

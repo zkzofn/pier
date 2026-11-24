@@ -6,9 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"pier/internal/discover"
 	"pier/internal/state"
+	"pier/internal/tmux"
 )
 
 func writeTranscript(t *testing.T, lines string) string {
@@ -120,5 +123,74 @@ func TestSidebarUpdateRow(t *testing.T) {
 		if w := lipgloss.Width(line); w > 29 {
 			t.Errorf("line %d cols wide, over the sidebar's 29: %q", w, line)
 		}
+	}
+}
+
+func TestSidebarScrollAndMultiAgentTags(t *testing.T) {
+	m := Model{
+		cursor: -1,
+		width:  30,
+		height: 6, // header + 5 body rows
+		groups: []discover.Worktree{
+			{
+				Path: "/dev/a", Branch: "main",
+				Instances: []tmux.Pane{
+					{ID: "%1", Session: "a1", Command: "claude"},
+					{ID: "%2", Session: "a2", Command: "agy"},
+				},
+			},
+			{
+				Path: "/dev/b", Branch: "dev",
+				Instances: []tmux.Pane{
+					{ID: "%3", Session: "b1", Command: "claude"},
+				},
+			},
+		},
+		states: map[string]state.PaneState{},
+		titles: map[string]string{},
+	}
+	m.buildRows()
+	if !m.multiAgent {
+		t.Fatal("expected multiAgent = true when claude and agy coexist")
+	}
+	v := m.View()
+	if !strings.Contains(v, "cl: a1") || !strings.Contains(v, "agy: a2") {
+		t.Errorf("multi-agent view should show cl:/agy: tags:\n%s", v)
+	}
+	if strings.Contains(v, "? help") {
+		t.Errorf("with height=6, bottom help row should be clipped before scrolling:\n%s", v)
+	}
+
+	// Scroll down via mouse wheel until the bottom actions appear.
+	for i := 0; i < 10; i++ {
+		mm, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+		m = mm.(Model)
+	}
+	if !strings.Contains(m.View(), "? help") {
+		t.Errorf("after scrolling down, ? help should be visible:\n%s", m.View())
+	}
+
+	// Keyboard j scrolls to keep cursor visible.
+	m.scroll = 0
+	for i := 0; i < 3; i++ {
+		mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		m = mm.(Model)
+	}
+	if m.cursor != 2 || !strings.Contains(m.View(), "b1") {
+		t.Errorf("cursor=%d scroll=%d view should show b1:\n%s", m.cursor, m.scroll, m.View())
+	}
+}
+
+func TestAgySessionTitle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conversation_metadata.json")
+	data := `{"conversations":{"conv-1":{"summary":{"Title":"Fix login bug","Preview":"ignored"}}}}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := agySessionTitle(path, "conv-1"); got != "Fix login bug" {
+		t.Errorf("agySessionTitle = %q, want Fix login bug", got)
+	}
+	if got := agySessionTitle(path, "missing"); got != "" {
+		t.Errorf("missing id should return empty, got %q", got)
 	}
 }

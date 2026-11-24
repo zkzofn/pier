@@ -17,8 +17,8 @@ const (
 	markerEnd   = "# <<< pier <<<"
 )
 
-// Run configures tmux and Claude Code for the pier binary at `self`,
-// printing a one-line result per target.
+// Run configures tmux, Claude Code, and Antigravity CLI for the pier binary
+// at `self`, printing a one-line result per target.
 func Run(self string) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return fmt.Errorf("tmux not found in PATH — install it first (e.g. `brew install tmux`), then re-run `pier setup`")
@@ -27,25 +27,105 @@ func Run(self string) error {
 	if err != nil {
 		return err
 	}
+	tmuxBin := StableSelf(self)
+	hookBin := PortableBin(self, exec.LookPath)
+
 	tmuxConf := filepath.Join(home, ".tmux.conf")
-	msg, err := TmuxConf(tmuxConf, self)
+	msg, err := TmuxConf(tmuxConf, tmuxBin)
 	if err != nil {
 		return fmt.Errorf("tmux.conf: %w", err)
 	}
 	fmt.Println(msg)
 
-	msg, err = ClaudeHooks(filepath.Join(home, ".claude", "settings.json"), self)
+	claudeSettings := filepath.Join(home, ".claude", "settings.json")
+	msg, err = ClaudeHooks(claudeSettings, hookBin)
 	if err != nil {
 		return fmt.Errorf("claude hooks: %w", err)
 	}
 	fmt.Println(msg)
 
+	msg, err = ClaudeStatusLine(claudeSettings, hookBin)
+	if err != nil {
+		return fmt.Errorf("claude statusLine: %w", err)
+	}
+	fmt.Println(msg)
+	statusWired := strings.Contains(msg, "wired") || strings.Contains(msg, "wrapped")
+
+	if hasAgy(home) {
+		msg, err = AgyHooks(filepath.Join(home, ".gemini", "config", "hooks.json"), hookBin)
+		if err != nil {
+			return fmt.Errorf("agy hooks: %w", err)
+		}
+		fmt.Println(msg)
+
+		msg, err = AgyStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), hookBin)
+		if err != nil {
+			return fmt.Errorf("agy statusLine: %w", err)
+		}
+		fmt.Println(msg)
+		if strings.Contains(msg, "wired") || strings.Contains(msg, "wrapped") {
+			statusWired = true
+		}
+	}
+
 	// Apply live if a tmux server is already running.
 	if msg := ReloadTmux(tmuxConf); msg != "" {
 		fmt.Println(msg)
 	}
-	fmt.Println("done — run `pier` (or your alias) to start")
+	if statusWired {
+		fmt.Println("note: agy/claude read the statusLine config only at startup — restart any sessions already running so they start reporting usage")
+	}
+	fmt.Println("done — run `pier` to start")
 	return nil
+}
+
+func hasAgy(home string) bool {
+	if _, err := exec.LookPath("agy"); err == nil {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(home, ".gemini"))
+	return err == nil
+}
+
+// StableSelf normalizes a Homebrew versioned Cellar binary path
+// (e.g. /opt/homebrew/Cellar/pier/1.3.1/bin/pier) to its linked bin path
+// (/opt/homebrew/bin/pier) when both resolve to the same executable.
+func StableSelf(self string) string {
+	const marker = "/Cellar/pier/"
+	i := strings.Index(self, marker)
+	if i < 0 || !strings.HasSuffix(self, "/bin/pier") {
+		return self
+	}
+	cand := self[:i] + "/bin/pier"
+	realCand, err1 := filepath.EvalSymlinks(cand)
+	realSelf, err2 := filepath.EvalSymlinks(self)
+	if err1 == nil && err2 == nil && realCand == realSelf {
+		return cand
+	}
+	return self
+}
+
+// PortableBin returns "pier" when PATH resolves to the same binary as self,
+// avoiding machine-specific absolute paths in synced hook configs.
+func PortableBin(self string, lookPath func(string) (string, error)) string {
+	stable := StableSelf(self)
+	if lookPath == nil {
+		return stable
+	}
+	p, err := lookPath("pier")
+	if err != nil {
+		return stable
+	}
+	realP, err1 := filepath.EvalSymlinks(p)
+	realSelf, err2 := filepath.EvalSymlinks(self)
+	if err1 == nil && err2 == nil && realP == realSelf {
+		return "pier"
+	}
+	return stable
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // ReloadTmux re-sources the config on a running server and returns the line
@@ -79,8 +159,8 @@ func tmuxBlock(self string) string {
 		// client.
 		"set -g detach-on-destroy off",
 		"set -g status-interval 5",
-		"set -g status-right-length 60",
-		`set -g status-right '#(` + self + ` status "#{pane_current_path}") %H:%M '`,
+		"set -g status-right-length 140",
+		`set -g status-right '#(` + self + ` status "#{pane_current_path}" "#{session_name}" "#{pane_id}" "#{client_width}") %H:%M '`,
 		`set-hook -g client-attached 'run-shell "` + self + ` ensure"'`,
 		`set-hook -g client-session-changed 'run-shell "` + self + ` ensure"'`,
 		// the moment a pane dies, kill any session left holding only a
@@ -163,6 +243,10 @@ func UpsertBlock(path, block string) (BlockStatus, error) {
 // a reader never sees a half-written config. `pier ensure` refreshes the
 // tmux block from a hook that several attaching clients can fire at once.
 func writeAtomic(path string, data []byte) error {
+	return writeAtomicMode(path, data, 0o644)
+}
+
+func writeAtomicMode(path string, data []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".pier-tmp-*")
 	if err != nil {
 		return err
@@ -173,7 +257,7 @@ func writeAtomic(path string, data []byte) error {
 		f.Close()
 		return err
 	}
-	if err := f.Chmod(0o644); err != nil {
+	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}
@@ -181,6 +265,17 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func writeBackupOnce(path string, data []byte) error {
+	if data == nil {
+		return nil
+	}
+	bak := path + ".bak-pier"
+	if _, err := os.Stat(bak); err == nil {
+		return nil
+	}
+	return os.WriteFile(bak, data, 0o600)
 }
 
 // TmuxConf writes the pier block into the tmux config: appended when absent,
@@ -245,10 +340,10 @@ func RefreshTmuxBlock(path, self string) (string, error) {
 	if !ok {
 		return "", nil
 	}
-	target := self
+	target := StableSelf(self)
 	if m := selfRe.FindStringSubmatch(content[i:j]); m != nil {
 		if _, err := os.Stat(expandHome(m[1])); err == nil {
-			target = m[1]
+			target = StableSelf(m[1])
 		}
 	}
 	st, err := UpsertBlock(path, tmuxBlock(target))
@@ -359,10 +454,8 @@ func ClaudeHooks(path, self string) (string, error) {
 	}
 	settings["hooks"] = hooks
 
-	if data != nil {
-		if err := os.WriteFile(path+".bak-pier", data, 0o600); err != nil {
-			return "", err
-		}
+	if err := writeBackupOnce(path, data); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
@@ -371,10 +464,58 @@ func ClaudeHooks(path, self string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+	if err := writeAtomicMode(path, append(out, '\n'), 0o644); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("claude hooks: %d event(s) wired (backup: %s.bak-pier)", added, filepath.Base(path)), nil
+}
+
+// ClaudeStatusLine configures Claude Code's statusLine to pass JSON payloads
+// through `pier statusline claude`, wrapping any existing statusLine command
+// transparently so the user's original status line output stays intact.
+func ClaudeStatusLine(path, self string) (string, error) {
+	settings := map[string]any{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return "", fmt.Errorf("parse %s: %w", path, err)
+		}
+	case os.IsNotExist(err):
+	default:
+		return "", err
+	}
+
+	sl, _ := settings["statusLine"].(map[string]any)
+	existingCmd, _ := sl["command"].(string)
+	if strings.Contains(existingCmd, "pier statusline") {
+		return "claude statusLine: already configured — skipped", nil
+	}
+	cmd := self + " statusline claude"
+	msg := "claude statusLine: wired"
+	if strings.TrimSpace(existingCmd) != "" {
+		cmd += " --wrap " + shellQuote(existingCmd)
+		msg = "claude statusLine: wrapped existing command"
+	}
+	settings["statusLine"] = map[string]any{
+		"type":    "command",
+		"command": cmd,
+	}
+
+	if err := writeBackupOnce(path, data); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := writeAtomicMode(path, append(out, '\n'), 0o644); err != nil {
+		return "", err
+	}
+	return msg, nil
 }
 
 // AgyHooks merges pier's named hook block ("pier") into Antigravity CLI's
@@ -410,6 +551,10 @@ func AgyHooks(path, self string) (string, error) {
 	root["pier"] = map[string]any{
 		"SessionStart":  []any{handler("session-start")},
 		"PreInvocation": []any{handler("user-prompt-submit")},
+		"PreToolUse": []any{map[string]any{
+			"matcher": "*",
+			"hooks":   []any{handler("pre-tool-use")},
+		}},
 		"PostToolUse": []any{map[string]any{
 			"matcher": "*",
 			"hooks":   []any{handler("pre-tool-use")},
@@ -417,10 +562,8 @@ func AgyHooks(path, self string) (string, error) {
 		"Stop": []any{handler("stop")},
 	}
 
-	if data != nil {
-		if err := os.WriteFile(path+".bak-pier", data, 0o600); err != nil {
-			return "", err
-		}
+	if err := writeBackupOnce(path, data); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
@@ -429,8 +572,66 @@ func AgyHooks(path, self string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil {
+	if err := writeAtomicMode(path, append(out, '\n'), 0o600); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("agy hooks: 4 event(s) wired (backup: %s.bak-pier)", filepath.Base(path)), nil
+	return fmt.Sprintf("agy hooks: 5 event(s) wired (backup: %s.bak-pier)", filepath.Base(path)), nil
+}
+
+// AgyStatusLine configures Antigravity CLI's statusLine in
+// ~/.gemini/antigravity-cli/settings.json, preserving stack_with_default and
+// wrapping any existing user statusLine command. Written with 0600 permissions.
+func AgyStatusLine(path, self string) (string, error) {
+	root := map[string]any{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &root); err != nil {
+			return "", fmt.Errorf("parse %s: %w", path, err)
+		}
+	case os.IsNotExist(err):
+	default:
+		return "", err
+	}
+
+	sl, ok := root["statusLine"].(map[string]any)
+	existingCmd, _ := sl["command"].(string)
+	if strings.Contains(existingCmd, "pier statusline") {
+		return "agy statusLine: already configured — skipped", nil
+	}
+	msg := "agy statusLine: wired"
+	if ok && strings.TrimSpace(existingCmd) != "" {
+		next := make(map[string]any, len(sl)+2)
+		for k, v := range sl {
+			next[k] = v
+		}
+		if _, hasType := next["type"]; !hasType {
+			next["type"] = "command"
+		}
+		next["command"] = self + " statusline agy --wrap " + shellQuote(existingCmd)
+		sl = next
+		msg = "agy statusLine: wrapped existing command"
+	} else {
+		sl = map[string]any{
+			"type":               "command",
+			"command":            self + " statusline agy",
+			"stack_with_default": true,
+		}
+	}
+	root["statusLine"] = sl
+
+	if err := writeBackupOnce(path, data); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := writeAtomicMode(path, append(out, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	return msg, nil
 }

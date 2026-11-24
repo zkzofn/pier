@@ -532,3 +532,16 @@ func TestPickerCtrlACyclesAgentAndShowsShortcutInUI(t *testing.T) {
 		t.Errorf("launched command = %q, want agy", gotCmd)
 	}
 }
+
+func TestPickerSingleAgentHidesCtrlA(t *testing.T) {
+	m := testPicker(testOpensHere, testDirs, nil)
+	m.agents = []agent.Spec{{Name: "claude", Cmd: "claude"}}
+	m.agentIdx = 0
+	v := m.View()
+	if strings.Contains(v, "^A") {
+		t.Errorf("single-agent picker should hide ^A hints:\n%s", v)
+	}
+	if !strings.Contains(v, "[claude]") {
+		t.Errorf("single-agent picker should still show [claude] badge:\n%s", v)
+	}
+}

@@ -15,7 +15,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/muesli/reflow/truncate"
 
+	"pier/internal/agent"
 	"pier/internal/discover"
+	"pier/internal/onboard"
 	"pier/internal/resume"
 	"pier/internal/state"
 	"pier/internal/tmux"
@@ -59,11 +61,15 @@ var (
 )
 
 // paneIcon returns a pane's status glyph and its styled rendering: "$" for a
-// terminal pane (no Claude Code — any recorded state is stale), else the
-// recorded state's glyph, "·" when unknown. Shared by the sidebar rows and
-// the picker's open-session rows so both show the same thing.
-func paneIcon(p tmux.Pane, states map[string]state.PaneState) (glyph, styled string) {
-	if !discover.IsClaudeCommand(p.Command) {
+// terminal pane (no AI agent — any recorded state is stale), else the recorded
+// state's glyph, "·" when unknown. Shared by the sidebar rows and the
+// picker's open-session rows so both show the same thing.
+func paneIcon(p tmux.Pane, states map[string]state.PaneState, custom ...[]agent.Spec) (glyph, styled string) {
+	var specs []agent.Spec
+	if len(custom) > 0 {
+		specs = custom[0]
+	}
+	if !discover.IsAgentCommand(p.Command, specs) {
 		return "$", styleDim.Render("$")
 	}
 	st := states[p.ID].State
@@ -105,24 +111,28 @@ type (
 		groups []discover.Worktree
 		states map[string]state.PaneState
 		panes  []tmux.Pane
+		custom []agent.Spec
 		err    error
 	}
 )
 
 // Model is the sidebar bubbletea model.
 type Model struct {
-	paneID  string // our own pane id ($TMUX_PANE)
-	session string // session this sidebar lives in
-	groups  []discover.Worktree
-	states  map[string]state.PaneState
-	titles  map[string]string // Claude session id → ai-title
-	rows    []row
-	items   []tmux.Pane
-	cursor  int
-	width   int
-	height  int
-	err     error
-	watcher *fsnotify.Watcher
+	paneID       string // our own pane id ($TMUX_PANE)
+	session      string // session this sidebar lives in
+	groups       []discover.Worktree
+	states       map[string]state.PaneState
+	titles       map[string]string // session id → title
+	customAgents []agent.Spec
+	rows         []row
+	items        []tmux.Pane
+	multiAgent   bool
+	cursor       int
+	scroll       int
+	width        int
+	height       int
+	err          error
+	watcher      *fsnotify.Watcher
 	// latest is the newer version the Homebrew tap carries, "" when we are
 	// current (or never checked).
 	latest    string
@@ -191,10 +201,12 @@ func refresh() tea.Msg {
 	}
 	dir := state.Dir()
 	state.Cleanup(dir, live)
+	cfg, _ := onboard.Load(onboard.ConfigPath())
 	return refreshMsg{
-		groups: discover.Group(panes, discover.GitBranch),
+		groups: discover.GroupWithCustom(panes, discover.GitBranch, cfg.Agents),
 		states: state.ReadAll(dir),
 		panes:  panes,
+		custom: cfg.Agents,
 	}
 }
 
@@ -220,6 +232,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.scroll > m.maxScroll() {
+			m.scroll = m.maxScroll()
+		}
 		// Multi-client attach reflows can squeeze this pane; snap back to the
 		// fixed width. No resize loop: an unchanged size emits no new event.
 		if pane := os.Getenv("TMUX_PANE"); pane != "" && msg.Width != tmux.SidebarWidth {
@@ -271,10 +286,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.err = nil
+		m.customAgents = msg.custom
 		m.groups = msg.groups
 		m.states = msg.states
 		m.loadTitles()
 		m.buildRows()
+		if m.cursor >= 0 {
+			m.clampScroll()
+		} else if max := m.maxScroll(); m.scroll > max {
+			m.scroll = max
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -284,13 +305,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			if m.cursor < len(m.items)-1 {
 				m.cursor++ // from the hidden -1 this lands on the first item
+				m.clampScroll()
 			}
 		case "k", "up":
 			if m.cursor > 0 {
 				m.cursor--
+				m.clampScroll()
 			}
 		case "g":
-			m.cursor = 0
+			if len(m.items) > 0 {
+				m.cursor = 0
+				m.clampScroll()
+			}
 		case "enter":
 			m.jump(m.cursor)
 		case "n":
@@ -303,13 +329,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		if msg.Action != tea.MouseActionPress {
 			return m, nil
 		}
-		if msg.Y < 0 || msg.Y >= len(m.rows) {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.scroll > 0 {
+				m.scroll--
+			}
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			if max := m.maxScroll(); m.scroll < max {
+				m.scroll++
+			}
+			return m, nil
+		case tea.MouseButtonLeft:
+		default:
 			return m, nil
 		}
-		r := m.rows[msg.Y]
+		if msg.Y <= 0 {
+			return m, nil
+		}
+		idx := 1 + m.scroll + (msg.Y - 1)
+		if idx < 0 || idx >= len(m.rows) {
+			return m, nil
+		}
+		r := m.rows[idx]
 		switch r.kind {
 		case rowItem:
 			m.cursor = r.item
@@ -360,15 +405,20 @@ func (m *Model) loadTitles() {
 func (m *Model) buildRows() {
 	m.rows = m.rows[:0]
 	m.items = m.items[:0]
+	seenAgents := map[string]bool{}
 	m.rows = append(m.rows, row{kind: rowBlank, item: -1}) // header line rendered in View
 	for _, wt := range m.groups {
 		m.rows = append(m.rows, row{kind: rowHeader, wt: wt, item: -1})
 		for _, p := range wt.Instances {
 			m.items = append(m.items, p)
 			m.rows = append(m.rows, row{kind: rowItem, wt: wt, pane: p, item: len(m.items) - 1})
+			if ag := discover.AgentNameWithCustom(p.Command, m.customAgents); ag != "" {
+				seenAgents[ag] = true
+			}
 		}
 		m.rows = append(m.rows, row{kind: rowBlank, item: -1})
 	}
+	m.multiAgent = len(seenAgents) > 1
 	if len(m.items) == 0 {
 		m.rows = append(m.rows,
 			row{kind: rowInfo, text: " no sessions", item: -1},
@@ -381,6 +431,58 @@ func (m *Model) buildRows() {
 	}
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1 // may become -1 (hidden) when empty
+	}
+}
+
+func (m Model) visibleBodyRows() int {
+	h := m.height - 1 // line 0 is the fixed header
+	if m.err != nil {
+		h--
+	}
+	if h < 1 {
+		return 1
+	}
+	return h
+}
+
+func (m Model) maxScroll() int {
+	bodyLen := len(m.rows) - 1
+	vis := m.visibleBodyRows()
+	if bodyLen <= vis {
+		return 0
+	}
+	return bodyLen - vis
+}
+
+func (m *Model) clampScroll() {
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if max := m.maxScroll(); m.scroll > max {
+		m.scroll = max
+	}
+	if m.cursor < 0 {
+		return
+	}
+	rowIdx := -1
+	for i, r := range m.rows {
+		if r.kind == rowItem && r.item == m.cursor {
+			rowIdx = i
+			break
+		}
+	}
+	if rowIdx <= 0 {
+		return
+	}
+	bodyIdx := rowIdx - 1
+	vis := m.visibleBodyRows()
+	if bodyIdx < m.scroll {
+		m.scroll = bodyIdx
+	} else if bodyIdx >= m.scroll+vis {
+		m.scroll = bodyIdx - vis + 1
+	}
+	if max := m.maxScroll(); m.scroll > max {
+		m.scroll = max
 	}
 }
 
@@ -405,7 +507,7 @@ func (m Model) openPopup(open func(self, session string) error) tea.Cmd {
 // blank. Shell instances and panes without any recorded Claude state fall
 // back to the tmux session name.
 func (m Model) itemLabel(p tmux.Pane, dup bool) string {
-	if st, ok := m.states[p.ID]; ok && st.SessionID != "" && discover.IsClaudeCommand(p.Command) {
+	if st, ok := m.states[p.ID]; ok && st.SessionID != "" && discover.IsAgentCommand(p.Command, m.customAgents) {
 		// re-clean stored labels: state written by older binaries may hold
 		// raw wrapper tags.
 		if l := state.Label(st.LastPrompt); l != "" {
@@ -424,6 +526,24 @@ func (m Model) itemLabel(p tmux.Pane, dup bool) string {
 		label += ":" + p.WindowIdx + "." + p.PaneIdx
 	}
 	return label
+}
+
+func shortAgentTag(ag string) string {
+	switch ag {
+	case "claude":
+		return "cl"
+	case "agy":
+		return "agy"
+	case "codex":
+		return "cdx"
+	case "grok":
+		return "grk"
+	default:
+		if r := []rune(ag); len(r) > 3 {
+			return string(r[:3])
+		}
+		return ag
+	}
 }
 
 func (m Model) View() string {
@@ -445,11 +565,22 @@ func (m Model) View() string {
 	// rows[0] is the reserved header line
 	writeLine(styleHeader.Render(" Pier — sessions"))
 
-	rows := m.rows
-	if len(rows) > 0 {
-		rows = rows[1:] // first refresh may not have arrived yet
+	var body []row
+	if len(m.rows) > 1 {
+		body = m.rows[1:] // first refresh may not have arrived yet
 	}
-	for _, r := range rows {
+	start := m.scroll
+	if start < 0 {
+		start = 0
+	}
+	if start > len(body) {
+		start = len(body)
+	}
+	end := start + m.visibleBodyRows()
+	if end > len(body) {
+		end = len(body)
+	}
+	for _, r := range body[start:end] {
 		switch r.kind {
 		case rowBlank:
 			writeLine("")
@@ -473,14 +604,22 @@ func (m Model) View() string {
 					dup = true
 				}
 			}
-			icon, iconR := paneIcon(r.pane, m.states)
+			icon, iconR := paneIcon(r.pane, m.states, m.customAgents)
 			label := m.itemLabel(r.pane, dup)
-			line := "  " + iconR + " " + label
+			tagPrefix, plainPrefix := "", ""
+			if m.multiAgent {
+				if ag := discover.AgentNameWithCustom(r.pane.Command, m.customAgents); ag != "" {
+					tag := shortAgentTag(ag) + ":"
+					tagPrefix = styleDim.Render(tag) + " "
+					plainPrefix = tag + " "
+				}
+			}
+			line := "  " + iconR + " " + tagPrefix + label
 			if r.pane.Session == m.session {
 				// Full-width highlighted row with an edge bar. The icon is
 				// folded into the row style: nested renders would reset the
 				// background mid-line.
-				line = styleCurrent.Width(int(w)).Render("▌ " + icon + " " + label)
+				line = styleCurrent.Width(int(w)).Render("▌ " + icon + " " + plainPrefix + label)
 			}
 			if r.item == m.cursor {
 				line = styleCursor.Render(strings.TrimRight(line, " "))
@@ -514,9 +653,8 @@ func projectSlug(cwd string) string {
 	}, cwd)
 }
 
-// sessionTitle derives a display title from a Claude Code session transcript:
-// the ai-title record when present, else the first real user message (which
-// for subagent/teammate sessions is the task they were assigned).
+// sessionTitle derives a display title from a Claude Code session transcript
+// or Antigravity CLI conversation metadata cache.
 func sessionTitle(cwd, sessionID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -526,12 +664,44 @@ func sessionTitle(cwd, sessionID string) string {
 	if _, err := os.Stat(path); err != nil {
 		// hook cwd can drift from the session's project dir; fall back to a glob
 		matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sessionID+".jsonl"))
-		if len(matches) == 0 {
-			return ""
+		if len(matches) > 0 {
+			path = matches[0]
+		} else {
+			path = ""
 		}
-		path = matches[0]
 	}
-	return titleFromTranscript(path)
+	if path != "" {
+		if t := titleFromTranscript(path); t != "" {
+			return t
+		}
+	}
+	return agySessionTitle(filepath.Join(home, ".gemini", "antigravity-cli", "cache", "conversation_metadata.json"), sessionID)
+}
+
+func agySessionTitle(metaPath, sessionID string) string {
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Conversations map[string]struct {
+			Summary struct {
+				Title   string `json:"Title"`
+				Preview string `json:"Preview"`
+			} `json:"summary"`
+		} `json:"conversations"`
+	}
+	if json.Unmarshal(data, &meta) != nil {
+		return ""
+	}
+	conv, ok := meta.Conversations[sessionID]
+	if !ok {
+		return ""
+	}
+	if t := strings.TrimSpace(conv.Summary.Title); t != "" {
+		return t
+	}
+	return state.Label(conv.Summary.Preview)
 }
 
 func titleFromTranscript(path string) string {

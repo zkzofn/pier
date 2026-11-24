@@ -37,7 +37,7 @@ const (
 var subcommands = map[string]bool{
 	"setup": true, "agent": true, "alias": true, "run": true, "new": true, "keys": true,
 	"ensure": true, "toggle": true, "done": true, "reap": true, "hook": true, "status": true,
-	"upgrade": true,
+	"statusline": true, "upgrade": true,
 }
 
 // Classify decides what the arguments mean. Flags go to the default agent so

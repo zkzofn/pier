@@ -3,6 +3,7 @@ package discover
 import (
 	"testing"
 
+	"pier/internal/agent"
 	"pier/internal/tmux"
 )
 
@@ -181,5 +182,34 @@ func TestRepresentative(t *testing.T) {
 	}
 	if _, ok := Representative(panes, "nosuch"); ok {
 		t.Error("unknown session has no representative")
+	}
+}
+
+func TestAgentNameAndCustom(t *testing.T) {
+	if got := AgentName("2.1.316"); got != "claude" {
+		t.Errorf("AgentName(version) = %q, want claude", got)
+	}
+	if got := AgentName("agy"); got != "agy" {
+		t.Errorf("AgentName(agy) = %q, want agy", got)
+	}
+	if got := AgentName("zsh"); got != "" {
+		t.Errorf("AgentName(zsh) = %q, want empty", got)
+	}
+
+	custom := []agent.Spec{{Name: "mybot", Cmd: "mybot-cli --fast"}}
+	if got := AgentNameWithCustom("mybot-cli", custom); got != "mybot" {
+		t.Errorf("AgentNameWithCustom(mybot-cli) = %q, want mybot", got)
+	}
+	panes := []tmux.Pane{
+		{Session: "s1", ID: "%1", Command: "mybot-cli", Path: "/dev/s1", WindowActive: true},
+		{Session: "s1", ID: "%2", Command: "zsh", Path: "/dev/s1", WindowActive: true, PaneActive: true},
+	}
+	groups := GroupWithCustom(panes, fakeBranch, custom)
+	if len(groups) != 1 || len(groups[0].Instances) != 1 || groups[0].Instances[0].ID != "%1" {
+		t.Errorf("GroupWithCustom failed to pick custom agent pane: %+v", groups)
+	}
+	rep, ok := RepresentativeWithCustom(panes, "s1", custom)
+	if !ok || rep.ID != "%1" {
+		t.Errorf("RepresentativeWithCustom = %+v ok=%v, want %%1", rep, ok)
 	}
 }

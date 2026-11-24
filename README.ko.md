@@ -2,8 +2,8 @@
 
 [English](README.md)
 
-**tmux 안에서 쓰는 Claude Code 세션 대시보드.** 세션들이 정박하는 부두(pier).
-지금 어떤 Claude Code 세션들이 돌고 있는지, 어느 워크트리·브랜치에서, 어떤 상태(작업중/입력대기)인지 사이드바로 보여주고, 클릭 한 번으로 그 세션에 점프한다. 쓰던 tmux 워크플로를 그대로 유지하면서, 사이드바 하나당 **8MB**로.
+**tmux 안에서 쓰는 AI 코딩 CLI 세션 대시보드 (`claude`, `agy`, `codex`, `grok`).** 세션들이 정박하는 부두(pier).
+지금 어떤 AI 세션들이 돌고 있는지, 어느 워크트리·브랜치에서, 어떤 상태(작업중/입력대기)인지 사이드바로 보여주고, 클릭 한 번으로 그 세션에 점프한다. 쓰던 tmux 워크플로를 그대로 유지하면서, 사이드바 하나당 **8MB**로.
 
 ```
 +----------------------+-------------------------------------+
@@ -19,13 +19,13 @@
  [session]                     [~/dev/suite2 (feat/nmt) 13:53]
 ```
 
-- **사이드바**: 실행 중인 모든 Claude Code 인스턴스를 워크트리(경로+브랜치)별로 그룹핑. 항목 이름은 대화의 AI 생성 제목(없으면 tmux 세션명). CC pane이 하나도 없는 세션도 `$`로 함께 표시 — 터미널 세션도 목록에서 보이고 점프된다
+- **사이드바**: 실행 중인 모든 AI CLI 인스턴스(`claude`, `agy`, `codex`, `grok`)를 워크트리(경로+브랜치)별로 그룹핑. 항목 이름은 현재 프롬프트 또는 대화 제목(없으면 tmux 세션명). 에이전트 pane이 하나도 없는 세션도 `$`로 함께 표시 — 터미널 세션도 목록에서 보이고 점프된다
 - **상태 아이콘**: `●` 작업중 / `○` 입력 대기 / `!` 권한 승인 대기 / `·` 미확인 / `$` 터미널 세션(일반 셸)
 - **점프**: 항목을 마우스로 클릭 → 다른 tmux 세션이어도 바로 전환
-- **status bar**: 우측에 현재 pane의 경로 + git 브랜치 상시 표시 (detached HEAD는 `detached@sha`)
+- **status bar**: 우측에 현재 보고 있는 세션에서 실행 중인 에이전트의 잔여 사용량(`5h` / `7d` 등)과 현재 pane의 경로 + git 브랜치 상시 표시 (detached HEAD는 `detached@sha`)
 - **자동 부착**: 세션에 attach하거나 전환하면 사이드바가 알아서 생긴다
-- **`pier`가 입구**: tmux 밖에서는 picker가 뜨고 고른 세션에 그대로 attach, tmux 안에서는 현재 pane에서 `claude`가 실행된다. `pier -r` 같은 인자는 그대로 `claude`에 전달. 최초 실행 때 tmux·hooks 배선과 셸 alias(기본 `cl`) 설정을 한 번 물어보고, 하루에 한 번 Homebrew tap에 새 버전이 있는지 확인해 업그레이드를 제안한다
-- **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — picker는 실행 중인 세션을 맨 위에 먼저 보여주고(지금 있는 세션이 `▌` 표시로 가장 위), 그 아래 디렉토리 목록이 온다. picker는 만들기만 하고 전환은 하지 않는다(전환은 사이드바 몫): 실행 중 세션 행에서 `Enter`는 그 세션의 디렉토리에 Claude Code 세션을 하나 더, 디렉토리 행에서 `Enter`는 그 경로에 새로 — 이름은 디렉토리를 따르고, 이미 있으면 `-2`, `-3`, … 이 붙는다. `Enter` 대신 `^S`를 누르면 그 행에 터미널 세션(Claude Code 없는 일반 셸) — pane 분할이나 새 윈도우 없이 터미널이 필요할 때. picker의 키는 popup이 떠 있는 동안 그대로 누른다(prefix 불필요). 모든 키는 `▸` 커서가 가리키는 행에 작용하며, 커서는 현재 세션에서 시작하므로 `prefix+N` `Enter`가 곧 "여기에 Claude Code 하나 더"다. tmux 밖 일반 터미널에서는 그냥 `pier`로 같은 picker가 뜨고, 거기서는 실행 중 세션 행의 `Enter`가 그 세션에 attach한다
+- **`pier`가 입구**: tmux 밖에서는 picker가 뜨고 고른 세션에 그대로 attach, tmux 안에서는 설정된 기본 에이전트(`pier agent`)가 현재 pane에서 실행된다. `pier -r` 같은 인자는 그대로 기본 에이전트에 전달. 최초 실행 때 tmux·에이전트 hooks(`~/.claude/settings.json`, `~/.gemini/config/hooks.json`)·statusLine 사용량 캐시 배선과 기본 에이전트 선택을 진행하고, 하루에 한 번 Homebrew tap에 새 버전이 있는지 확인해 업그레이드를 제안한다
+- **새 세션 생성**: `+ new session` 클릭, 사이드바에서 `n`, 또는 아무 데서나 `prefix+N` — picker는 실행 중인 세션을 맨 위에 먼저 보여주고(지금 있는 세션이 `▌` 표시로 가장 위), 그 아래 디렉토리 목록이 온다. picker는 만들기만 하고 전환은 하지 않는다(전환은 사이드바 몫): `^A`로 설치된 에이전트(`claude`, `agy`, `codex`, `grok`)를 순환 전환하고, 실행 중 세션 행에서 `Enter`는 그 세션의 디렉토리에 에이전트 세션을 하나 더, 디렉토리 행에서 `Enter`는 그 경로에 새로 — 이름은 디렉토리를 따르고, 이미 있으면 `-2`, `-3`, … 이 붙는다. `Enter` 대신 `^S`를 누르면 그 행에 터미널 세션(일반 셸) — pane 분할이나 새 윈도우 없이 터미널이 필요할 때. picker의 키는 popup이 떠 있는 동안 그대로 누른다(prefix 불필요). 모든 키는 `▸` 커서가 가리키는 행에 작용하며, 커서는 현재 세션에서 시작하므로 `prefix+N` `Enter`가 곧 "여기에 에이전트 하나 더"다. tmux 밖 일반 터미널에서는 그냥 `pier`로 같은 picker가 뜨고, 거기서는 실행 중 세션 행의 `Enter`가 그 세션에 attach한다
 - **복구(resume)**: 크래시·전원 차단·OS 재부팅으로 날아간 Claude Code 세션은 사라지지 않는다 — picker에서 그 디렉토리에 `↻ resume` 버튼이 붙는다. `→` 후 `Enter`면 그 대화를 기존 세션명으로 이어가고, 그냥 `Enter`면 빈 세션으로 시작하며 복구 기회는 남는다. 사상자가 있으면 맨 위 `↻ restore all` 행이 셧다운 전 세션 구성 전체를 한 번에 되살린다
 - **텔레그램**: picker에서 `^T`(켜지면 `telegram ✓` 배지) — Claude Code의 텔레그램 채널을 붙인 채로 세션을 시작한다. `^T`는 먼저 플러그인이 켜져 있고 봇 토큰이 있는지 확인하고, 없으면 뭐가 빠졌는지 알려준다(`/plugin`, `/telegram:configure`) — Claude Code는 그냥 시작하고 채널만 조용히 안 붙기 때문. 플러그인 쪽 제약(0.0.7): 봇은 한 번에 한 Claude Code 세션만 잡을 수 있고, 플러그인이 켜진 새 Claude Code 세션이 열리면 그쪽이 가져간다
 - **업데이트 알림**: Homebrew tap에 새 버전이 있으면 모든 사이드바 하단에 `↑ <버전> · pier upgrade` 줄이 뜬다
@@ -33,7 +33,7 @@
 
 ## 요구사항
 
-- [Claude Code](https://claude.com/claude-code) — 이 대시보드가 보여주는 대상
+- 지원하는 AI 코딩 CLI 중 1개 이상 ([Claude Code](https://claude.com/claude-code), [Antigravity CLI](https://antigravity.google) `agy`, `codex`, `grok`)
 - tmux 3.2+ (3.6a에서 개발·검증; Homebrew 설치 시 자동으로 함께 설치됨)
 - Go 1.24+는 소스 빌드 시에만 — Homebrew는 프리빌트 바이너리 제공
 - macOS에서 개발·검증. Linux는 이론상 동작하나 미검증
@@ -43,6 +43,7 @@
 ### Homebrew
 
 ```sh
+brew tap zkzofn/tap
 brew install zkzofn/tap/pier
 pier
 ```
@@ -58,15 +59,12 @@ pier
 
 최초 `pier` 실행은 짧은 마법사다.
 
-먼저 tmux·Claude Code 배선을 제안한다 — `pier setup`과 같은 일로,
-`~/.tmux.conf`에 마커 블록을 추가하고 `~/.claude/settings.json`에 hook 6종을
-병합한다. 기존 설정은 보존되고 `settings.json`은 `.bak-pier` 백업을 먼저 남기며,
-재실행해도 중복되지 않고 tmux 서버가 떠 있으면 즉시 리로드한다.
+먼저 tmux·에이전트 hooks·상태바 사용량 연동을 제안한다 — `pier setup`과 같은 일로:
+- `~/.tmux.conf`에 마커 블록 추가
+- `~/.claude/settings.json`에 hook 6종 병합, `agy` 설치 시 `~/.gemini/config/hooks.json`에 hook 5종 병합
+- `~/.claude/settings.json`(기존 `statusLine` 스크립트가 있으면 투명 래핑) 및 `~/.gemini/antigravity-cli/settings.json`에 `pier statusline`을 연결해 tmux 하단 상태바에서 현재 세션 에이전트의 5시간/주간 잔여 사용량을 표시
 
-그 다음 셸 alias를 제안한다 — 기본값은 `cl`이고, 로그인 셸의 시작 파일
-(`~/.zshrc`, macOS bash는 `~/.bash_profile` / Linux는 `~/.bashrc`, fish는
-`config.fish`)에 마커 블록으로 기록된다. 둘 다 `n`으로 건너뛰고 나중에
-`pier setup` / `pier alias <이름>`으로 해도 된다.
+기존 설정은 보존되고 수정 전 `.bak-pier` 백업을 남기며, 재실행해도 중복되지 않고 tmux 서버가 떠 있으면 즉시 리로드한다. 여러 에이전트가 설치되어 있으면 기본 에이전트를 선택한다(`pier agent <이름>`으로 언제든 변경 가능).
 
 업그레이드 후 첫 `pier` 실행 때는 `~/.tmux.conf`의 pier 블록을 최신 내용으로
 갱신하고 tmux를 리로드한다(`tmux.conf: pier block updated`). 이때 블록이 가리키던
@@ -109,8 +107,8 @@ set -g mouse on
 set -g detach-on-destroy off
 
 set -g status-interval 5
-set -g status-right-length 60
-set -g status-right '#(~/.local/bin/pier status "#{pane_current_path}") %H:%M '
+set -g status-right-length 140
+set -g status-right '#(~/.local/bin/pier status "#{pane_current_path}" "#{session_name}" "#{pane_id}" "#{client_width}") %H:%M '
 
 # attach·세션 전환 시 사이드바 자동 생성 (이미 있으면 no-op)
 set-hook -g client-attached 'run-shell "~/.local/bin/pier ensure"'

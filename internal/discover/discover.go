@@ -20,7 +20,41 @@ var versionRe = regexp.MustCompile(`^\d+(\.\d+)+[a-z]?$`)
 // IsClaudeCommand reports whether a pane_current_command looks like a supported
 // AI coding CLI (claude, agy, codex, grok, or a Claude Code version binary).
 func IsClaudeCommand(cmd string) bool {
-	return agent.IsBuiltinBin(cmd) || versionRe.MatchString(cmd)
+	return AgentName(cmd) != ""
+}
+
+// AgentName maps pane_current_command to a normalized built-in agent name
+// ("claude", "agy", "codex", "grok"), or "" for non-agent commands.
+func AgentName(cmd string) string {
+	if cmd == "claude" || versionRe.MatchString(cmd) {
+		return "claude"
+	}
+	if agent.IsBuiltinBin(cmd) {
+		return cmd
+	}
+	return ""
+}
+
+// AgentNameWithCustom resolves pane_current_command to a known agent name,
+// checking built-ins first and then user-defined specs in config.json.
+func AgentNameWithCustom(cmd string, custom []agent.Spec) string {
+	if name := AgentName(cmd); name != "" {
+		return name
+	}
+	if cmd == "" {
+		return ""
+	}
+	for _, s := range custom {
+		if cmd == s.Bin() {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+// IsAgentCommand reports whether cmd is a built-in or custom agent binary.
+func IsAgentCommand(cmd string, custom []agent.Spec) bool {
+	return AgentNameWithCustom(cmd, custom) != ""
 }
 
 // Worktree is a group of Claude Code panes sharing a working directory.
@@ -54,23 +88,29 @@ func outranks(p, cur tmux.Pane) bool {
 }
 
 // Representative picks the pane that stands for a session: the best-ranked
-// Claude Code pane when the session has one (so a split shell holding focus
-// never turns a Claude session into a "$" row), else its best-ranked regular
+// AI agent pane when the session has one (so a split shell holding focus
+// never turns an agent session into a "$" row), else its best-ranked regular
 // pane. Sidebar panes never qualify; ok is false when nothing does.
 func Representative(panes []tmux.Pane, session string) (best tmux.Pane, ok bool) {
+	return RepresentativeWithCustom(panes, session, nil)
+}
+
+// RepresentativeWithCustom behaves like Representative while also honoring
+// custom agent specs from config.json.
+func RepresentativeWithCustom(panes []tmux.Pane, session string, custom []agent.Spec) (best tmux.Pane, ok bool) {
 	bestCC := false
 	for _, p := range panes {
 		if p.Sidebar || p.Session != session {
 			continue
 		}
-		cc := IsClaudeCommand(p.Command)
+		cc := IsAgentCommand(p.Command, custom)
 		switch {
 		case !ok:
 			// first candidate
 		case cc && !bestCC:
-			// a Claude pane beats any shell pane
+			// an agent pane beats any shell pane
 		case cc != bestCC:
-			continue // shell pane can't beat the Claude pane we hold
+			continue // shell pane can't beat the agent pane we hold
 		case !outranks(p, best):
 			continue
 		}
@@ -79,14 +119,19 @@ func Representative(panes []tmux.Pane, session string) (best tmux.Pane, ok bool)
 	return best, ok
 }
 
-// Group filters Claude Code panes and groups them by pane_current_path.
-// A session with no Claude Code pane at all still gets one entry — its most
+// Group filters AI agent panes and groups them by pane_current_path.
+// A session with no agent pane at all still gets one entry — its most
 // prominent regular pane (focused > current window > first) represents it as
 // a shell instance, so plain-shell sessions stay visible and jumpable.
 func Group(panes []tmux.Pane, branch BranchFunc) []Worktree {
+	return GroupWithCustom(panes, branch, nil)
+}
+
+// GroupWithCustom behaves like Group while also recognizing custom agent specs.
+func GroupWithCustom(panes []tmux.Pane, branch BranchFunc, custom []agent.Spec) []Worktree {
 	hasCC := map[string]bool{}
 	for _, p := range panes {
-		if !p.Sidebar && IsClaudeCommand(p.Command) {
+		if !p.Sidebar && IsAgentCommand(p.Command, custom) {
 			hasCC[p.Session] = true
 		}
 	}
@@ -101,7 +146,7 @@ func Group(panes []tmux.Pane, branch BranchFunc) []Worktree {
 	}
 	byPath := map[string][]tmux.Pane{}
 	for _, p := range panes {
-		if p.Sidebar || !IsClaudeCommand(p.Command) {
+		if p.Sidebar || !IsAgentCommand(p.Command, custom) {
 			continue
 		}
 		byPath[p.Path] = append(byPath[p.Path], p)
