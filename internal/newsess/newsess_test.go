@@ -11,13 +11,13 @@ import (
 
 func TestCollectLeavesOpenPathsToTheSessionList(t *testing.T) {
 	home := t.TempDir()
-	for _, d := range []string{"dev/suite1", "dev/wishi", "dev/.hidden"} {
+	for _, d := range []string{"dev/api", "dev/wishi", "dev/.hidden"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	panes := []tmux.Pane{
-		{Session: "suite1", ID: "%1", Command: "claude", Path: filepath.Join(home, "dev", "suite1")},
+		{Session: "api", ID: "%1", Command: "claude", Path: filepath.Join(home, "dev", "api")},
 		{Session: "sb", ID: "%2", Command: "pier", Path: filepath.Join(home, "dev", "wishi"), Sidebar: true},
 	}
 	cands := Collect(home, panes)
@@ -26,7 +26,7 @@ func TestCollectLeavesOpenPathsToTheSessionList(t *testing.T) {
 	for _, c := range cands {
 		byPath[c.Path] = c
 	}
-	if _, ok := byPath[filepath.Join(home, "dev", "suite1")]; ok {
+	if _, ok := byPath[filepath.Join(home, "dev", "api")]; ok {
 		t.Error("a directory hosting a live pane is listed as an open session, not a directory")
 	}
 	if _, ok := byPath[filepath.Join(home, "dev", "wishi")]; !ok {
@@ -85,11 +85,11 @@ func TestOpenSessions(t *testing.T) {
 }
 
 func TestFilterOpen(t *testing.T) {
-	opens := []Open{{Session: "suite2", Path: "/Users/j/dev/suite2"}, {Session: "recoder", Path: "/Users/j/dev/recoder"}}
+	opens := []Open{{Session: "web", Path: "/Users/j/dev/web"}, {Session: "recoder", Path: "/Users/j/dev/recoder"}}
 	if got := FilterOpen(opens, ""); len(got) != 2 {
 		t.Errorf("empty query keeps all, got %d", len(got))
 	}
-	if got := FilterOpen(opens, "SUITE"); len(got) != 1 || got[0].Session != "suite2" {
+	if got := FilterOpen(opens, "WEB"); len(got) != 1 || got[0].Session != "web" {
 		t.Errorf("case-insensitive name match failed: %+v", got)
 	}
 	if got := FilterOpen(opens, "dev/rec"); len(got) != 1 || got[0].Session != "recoder" {
@@ -102,13 +102,13 @@ func TestFilterOpen(t *testing.T) {
 
 func TestFilter(t *testing.T) {
 	cands := []Candidate{
-		{Path: "/Users/j/dev/suite1", Name: "suite1"},
+		{Path: "/Users/j/dev/api", Name: "api"},
 		{Path: "/Users/j/dev/wishi", Name: "wishi"},
 	}
 	if got := Filter(cands, ""); len(got) != 2 {
 		t.Errorf("empty query should keep all, got %d", len(got))
 	}
-	if got := Filter(cands, "SUITE"); len(got) != 1 || got[0].Name != "suite1" {
+	if got := Filter(cands, "API"); len(got) != 1 || got[0].Name != "api" {
 		t.Errorf("case-insensitive filter failed: %+v", got)
 	}
 	if got := Filter(cands, "nope"); len(got) != 0 {
@@ -148,9 +148,9 @@ func TestSanitizeAndUnique(t *testing.T) {
 	if got := Sanitize("..."); got != "session" {
 		t.Errorf("all-reserved name should fall back: %q", got)
 	}
-	taken := map[string]bool{"suite5": true, "suite5-2": true}
-	if got := Unique("suite5", taken); got != "suite5-3" {
-		t.Errorf("Unique = %q, want suite5-3", got)
+	taken := map[string]bool{"shop": true, "shop-2": true}
+	if got := Unique("shop", taken); got != "shop-3" {
+		t.Errorf("Unique = %q, want shop-3", got)
 	}
 	if got := Unique("fresh", taken); got != "fresh" {
 		t.Errorf("Unique = %q, want fresh", got)

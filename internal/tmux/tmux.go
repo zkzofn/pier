@@ -242,7 +242,7 @@ func ServerAlive() bool {
 }
 
 // KillSession kills a session by exact name ("=" disables prefix matching —
-// this one is destructive, "suite" must never match "suite2").
+// this one is destructive, "web" must never match "web2").
 func KillSession(session string) error {
 	_, err := run("kill-session", "-t", "="+session)
 	return err

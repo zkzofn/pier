@@ -309,7 +309,7 @@ func (m pickerModel) creates(r *pickerRow) bool {
 
 // rowPath is where a row's new session lives; baseName what it is named
 // after — the directory's base name for open rows too, so a second agent in
-// ~/dev/suite1 is suite1-2 and a third suite1-3, never suite1-2-2.
+// ~/dev/api is api-2 and a third api-3, never api-2-2.
 func rowPath(r *pickerRow) string {
 	if r.kind == prOpen {
 		return r.open.Path

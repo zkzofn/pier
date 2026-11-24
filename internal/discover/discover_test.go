@@ -38,25 +38,25 @@ func fakeBranch(path string) string { return "br:" + path }
 
 func TestGroup(t *testing.T) {
 	panes := []tmux.Pane{
-		{Session: "suite2", ID: "%1", Command: "2.1.202", Path: "/dev/suite2"},
-		{Session: "suite1", ID: "%2", Command: "2.1.206", Path: "/dev/suite1"},
-		{Session: "suite2", ID: "%3", Command: "zsh", Path: "/dev/suite2"},               // not CC
-		{Session: "suite2", ID: "%4", Command: "pier", Path: "/dev/suite2"},              // not CC
-		{Session: "suite2", ID: "%5", Command: "claude", Path: "/dev/suite2"},            // 2nd CC in suite2
-		{Session: "x", ID: "%6", Command: "2.1.211", Path: "/dev/suite2", Sidebar: true}, // marked sidebar
+		{Session: "web", ID: "%1", Command: "2.1.202", Path: "/dev/web"},
+		{Session: "api", ID: "%2", Command: "2.1.206", Path: "/dev/api"},
+		{Session: "web", ID: "%3", Command: "zsh", Path: "/dev/web"},               // not CC
+		{Session: "web", ID: "%4", Command: "pier", Path: "/dev/web"},              // not CC
+		{Session: "web", ID: "%5", Command: "claude", Path: "/dev/web"},            // 2nd CC in web
+		{Session: "x", ID: "%6", Command: "2.1.211", Path: "/dev/web", Sidebar: true}, // marked sidebar
 	}
 	got := Group(panes, fakeBranch)
 	if len(got) != 2 {
 		t.Fatalf("want 2 worktrees, got %d: %+v", len(got), got)
 	}
-	if got[0].Path != "/dev/suite1" || got[1].Path != "/dev/suite2" {
+	if got[0].Path != "/dev/api" || got[1].Path != "/dev/web" {
 		t.Fatalf("wrong path order: %+v", got)
 	}
-	if got[1].Branch != "br:/dev/suite2" {
+	if got[1].Branch != "br:/dev/web" {
 		t.Errorf("branch func not applied: %+v", got[1])
 	}
 	if len(got[1].Instances) != 2 {
-		t.Fatalf("suite2 should have 2 CC panes, got %+v", got[1].Instances)
+		t.Fatalf("web should have 2 CC panes, got %+v", got[1].Instances)
 	}
 	if got[1].Instances[0].ID != "%1" || got[1].Instances[1].ID != "%5" {
 		t.Errorf("instances not sorted by session/id: %+v", got[1].Instances)
@@ -66,8 +66,8 @@ func TestGroup(t *testing.T) {
 func TestGroupShellSessions(t *testing.T) {
 	panes := []tmux.Pane{
 		// CC session: its extra zsh pane must NOT produce a shell entry
-		{Session: "suite1", ID: "%1", Command: "claude", Path: "/dev/suite1", WindowActive: true, PaneActive: true},
-		{Session: "suite1", ID: "%2", Command: "zsh", Path: "/dev/suite1", WindowActive: true},
+		{Session: "api", ID: "%1", Command: "claude", Path: "/dev/api", WindowActive: true, PaneActive: true},
+		{Session: "api", ID: "%2", Command: "zsh", Path: "/dev/api", WindowActive: true},
 		// shell session: the focused pane represents it, not another window's
 		{Session: "term", ID: "%3", Command: "zsh", Path: "/home", PaneActive: true},
 		{Session: "term", ID: "%4", Command: "nvim", Path: "/dev/notes", WindowActive: true, PaneActive: true},
@@ -80,28 +80,28 @@ func TestGroupShellSessions(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("want 3 worktrees, got %d: %+v", len(got), got)
 	}
-	if got[0].Path != "/dev/notes" || got[1].Path != "/dev/suite1" || got[2].Path != "/var/log" {
+	if got[0].Path != "/dev/api" || got[1].Path != "/dev/notes" || got[2].Path != "/var/log" {
 		t.Fatalf("wrong paths: %+v", got)
 	}
-	if len(got[0].Instances) != 1 || got[0].Instances[0].ID != "%4" {
-		t.Errorf("term should be represented by its focused pane %%4: %+v", got[0].Instances)
+	if len(got[0].Instances) != 1 || got[0].Instances[0].ID != "%1" {
+		t.Errorf("api must keep only its CC pane: %+v", got[0].Instances)
 	}
-	if len(got[1].Instances) != 1 || got[1].Instances[0].ID != "%1" {
-		t.Errorf("suite1 must keep only its CC pane: %+v", got[1].Instances)
+	if len(got[1].Instances) != 1 || got[1].Instances[0].ID != "%4" {
+		t.Errorf("term should be represented by its focused pane %%4: %+v", got[1].Instances)
 	}
 	if len(got[2].Instances) != 1 || got[2].Instances[0].ID != "%6" {
 		t.Errorf("logs should fall back to its current-window pane: %+v", got[2].Instances)
 	}
 
 	order := SessionOrder(got)
-	want := []string{"term", "suite1", "logs"}
+	want := []string{"api", "term", "logs"}
 	if len(order) != 3 || order[0] != want[0] || order[1] != want[1] || order[2] != want[2] {
 		t.Errorf("shell sessions missing from session order: %v, want %v", order, want)
 	}
 }
 
 func TestParsePanes(t *testing.T) {
-	out := "suite2\t0\t0\t%1\t2.1.202\t/Users/j/dev/suite2\t1\t1\t\n" +
+	out := "web\t0\t0\t%1\t2.1.202\t/Users/j/dev/web\t1\t1\t\n" +
 		"term\t0\t1\t%9\tpier\t/Users/j\t1\t0\t1\n" +
 		"short\tline\n" +
 		// Last line with its trailing tab stripped (observed live: TrimSpace

@@ -21,12 +21,12 @@ import (
 
 var (
 	testOpens = []newsess.Open{
-		{Session: "suite2", Path: "/Users/j/dev/suite2", Pane: tmux.Pane{ID: "%1", Command: "claude"}},
+		{Session: "web", Path: "/Users/j/dev/web", Pane: tmux.Pane{ID: "%1", Command: "claude"}},
 		{Session: "recoder", Path: "/Users/j/dev/recoder", Pane: tmux.Pane{ID: "%2", Command: "zsh"}},
 	}
 	testDirs = []newsess.Candidate{
 		{Path: "/Users/j/dev/pier", Name: "pier"},
-		{Path: "/Users/j/dev/suite3", Name: "suite3"},
+		{Path: "/Users/j/dev/web2", Name: "web2"},
 	}
 	// inside tmux the picker was opened from session "me": it leads the open
 	// rows, flagged Here
@@ -34,7 +34,7 @@ var (
 		{Session: "me", Path: "/Users/j/dev/me", Pane: tmux.Pane{ID: "%3", Command: "claude"}, Here: true},
 	}, testOpens...)
 	testCasualties = map[string]resume.Casualty{
-		"/Users/j/dev/suite3": {SID: "sid-3", CWD: "/Users/j/dev/suite3", LastActive: time.Now()},
+		"/Users/j/dev/web2": {SID: "sid-3", CWD: "/Users/j/dev/web2", LastActive: time.Now()},
 	}
 )
 
@@ -71,7 +71,7 @@ func TestPickerRowsOpenSessionsFirst(t *testing.T) {
 	if m.cursor != 1 {
 		t.Errorf("cursor = %d, want the first open session (1), never restore-all", m.cursor)
 	}
-	if m.rows[1].open.Session != "suite2" || m.rows[4].cand.Name != "pier" {
+	if m.rows[1].open.Session != "web" || m.rows[4].cand.Name != "pier" {
 		t.Error("rows carry the wrong payloads")
 	}
 }
@@ -89,10 +89,10 @@ func TestPickerRowsWithoutOpenSessions(t *testing.T) {
 
 func TestPickerFilterAppliesToBothGroups(t *testing.T) {
 	m := testPicker(testOpens, testDirs, testCasualties)
-	m.query = "suite"
+	m.query = "web"
 	m.refilter()
 	if got := kinds(m); !slices.Equal(got, []pickerRowKind{prOpen, prSep, prDir}) {
-		t.Fatalf("rows = %v, want open suite2 · sep · dir suite3 (restore-all hidden while filtering)", got)
+		t.Fatalf("rows = %v, want open web · sep · dir web2 (restore-all hidden while filtering)", got)
 	}
 	m.query = "recoder"
 	m.refilter()
@@ -125,17 +125,17 @@ func TestPickerShellOnOpenRowOpensTerminalThere(t *testing.T) {
 	defer func() { tmuxNewDetached = tmux.NewSessionDetached }()
 
 	m := testPicker(testOpens, testDirs, nil)
-	m.taken = map[string]bool{"suite2": true, "recoder": true}
+	m.taken = map[string]bool{"web": true, "recoder": true}
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	fm := model.(pickerModel)
 	if !created {
 		t.Fatalf("^S on an open-session row must create a terminal session, not jump (attach=%q)", fm.attach)
 	}
-	if gotName != "suite2-2" || gotPath != "/Users/j/dev/suite2" || gotCmd != cmdShell {
-		t.Errorf("created %q at %q running %q, want suite2-2 at /Users/j/dev/suite2 running the default shell",
+	if gotName != "web-2" || gotPath != "/Users/j/dev/web" || gotCmd != cmdShell {
+		t.Errorf("created %q at %q running %q, want web-2 at /Users/j/dev/web running the default shell",
 			gotName, gotPath, gotCmd)
 	}
-	if fm.attach != "suite2-2" {
+	if fm.attach != "web-2" {
 		t.Errorf("standalone picker should attach to the new terminal, got %q", fm.attach)
 	}
 }
@@ -145,8 +145,8 @@ func TestPickerShellOnOpenRowOpensTerminalThere(t *testing.T) {
 func TestPickerEnterOnOpenRowStandaloneAttaches(t *testing.T) {
 	m := testPicker(testOpens, testDirs, nil)
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if fm := model.(pickerModel); fm.attach != "suite2" {
-		t.Errorf("Enter on an open row should attach to it, attach = %q, want suite2", fm.attach)
+	if fm := model.(pickerModel); fm.attach != "web" {
+		t.Errorf("Enter on an open row should attach to it, attach = %q, want web", fm.attach)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestPickerMoveSkipsSeparator(t *testing.T) {
 // claimed "Enter: create" while the cursor sat on a running session.
 func TestPickerHintFollowsCursorRow(t *testing.T) {
 	m := testPicker(testOpens, testDirs, testCasualties)
-	// rows: [restore-all, open suite2, open recoder, sep, dir pier, dir suite3]
+	// rows: [restore-all, open web, open recoder, sep, dir pier, dir web2]
 	if v := m.View(); !strings.Contains(v, "Enter: jump · ^S: terminal there") {
 		t.Errorf("open row: hint must explain jump/terminal-there:\n%s", v)
 	}
@@ -180,7 +180,7 @@ func TestPickerHintFollowsCursorRow(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "Enter: claude · ^S: terminal") {
 		t.Errorf("dir row: hint must explain claude/terminal:\n%s", v)
 	}
-	m.cursor = 5 // suite3 carries a casualty
+	m.cursor = 5 // web2 carries a casualty
 	if v := m.View(); !strings.Contains(v, "→ resume") {
 		t.Errorf("casualty row: hint must offer the resume arrow:\n%s", v)
 	}
@@ -207,7 +207,7 @@ func TestPickerViewFitsAndShowsOpenRows(t *testing.T) {
 			t.Errorf("line %d cols wide, over 45: %q", w, line)
 		}
 	}
-	if !strings.Contains(v, "● ") || !strings.Contains(v, "suite2") || !strings.Contains(v, "dev/suite2") {
+	if !strings.Contains(v, "● ") || !strings.Contains(v, "web") || !strings.Contains(v, "dev/web") {
 		t.Errorf("open row should show icon, session name and path:\n%s", v)
 	}
 	if !strings.Contains(v, "$ ") || !strings.Contains(v, "recoder") {
@@ -228,7 +228,7 @@ func TestPickerCurrentSessionLeadsOpenRowsAndBootsTheCursor(t *testing.T) {
 	if got := kinds(m); !slices.Equal(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
 	}
-	if !m.rows[1].open.Here || m.rows[1].open.Session != "me" || m.rows[2].open.Session != "suite2" {
+	if !m.rows[1].open.Here || m.rows[1].open.Session != "me" || m.rows[2].open.Session != "web" {
 		t.Errorf("the current session leads, the others follow without a gap: %+v", m.rows[1:4])
 	}
 	if m.cursor != 1 {
@@ -254,7 +254,7 @@ func TestPickerEnterOnOpenRowInsideTmuxStartsAnotherClaudeThere(t *testing.T) {
 
 	m := testPicker(testOpensHere, testDirs, nil)
 	m.insideTmux = true
-	m.taken = map[string]bool{"me": true, "suite2": true, "recoder": true}
+	m.taken = map[string]bool{"me": true, "web": true, "recoder": true}
 	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // cursor boots on "me"
 	if gotName != "me-2" || gotPath != "/Users/j/dev/me" || gotCmd != claude.Cmd(false) {
 		t.Errorf("created %q at %q running %q, want me-2 at /Users/j/dev/me running claude", gotName, gotPath, gotCmd)
@@ -263,19 +263,19 @@ func TestPickerEnterOnOpenRowInsideTmuxStartsAnotherClaudeThere(t *testing.T) {
 		t.Errorf("inside tmux nothing is handed back to attach, got %q", fm.attach)
 	}
 
-	m.cursor = 1 // suite2
+	m.cursor = 1 // web
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if gotName != "suite2-2" || gotPath != "/Users/j/dev/suite2" {
-		t.Errorf("another open row: created %q at %q, want suite2-2 at /Users/j/dev/suite2", gotName, gotPath)
+	if gotName != "web-2" || gotPath != "/Users/j/dev/web" {
+		t.Errorf("another open row: created %q at %q, want web-2 at /Users/j/dev/web", gotName, gotPath)
 	}
 
-	// on a second agent's row ("suite1-2" at ~/dev/suite1) the third is suite1-3
-	m = testPicker([]newsess.Open{{Session: "suite1-2", Path: "/Users/j/dev/suite1", Here: true}}, testDirs, nil)
+	// on a second agent's row ("api-2" at ~/dev/api) the third is api-3
+	m = testPicker([]newsess.Open{{Session: "api-2", Path: "/Users/j/dev/api", Here: true}}, testDirs, nil)
 	m.insideTmux = true
-	m.taken = map[string]bool{"suite1": true, "suite1-2": true}
+	m.taken = map[string]bool{"api": true, "api-2": true}
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if gotName != "suite1-3" {
-		t.Errorf("names follow the directory: got %q, want suite1-3", gotName)
+	if gotName != "api-3" {
+		t.Errorf("names follow the directory: got %q, want api-3", gotName)
 	}
 }
 
@@ -318,12 +318,12 @@ func TestPickerCurrentOpenRowIsMarkedLikeTheSidebar(t *testing.T) {
 	if !strings.Contains(v, "▸ · me  /Users/j/dev/me") {
 		t.Errorf("under the cursor the current row reads like any ▸ row:\n%s", v)
 	}
-	m.cursor = 1 // suite2
+	m.cursor = 1 // web
 	v = m.View()
 	if !strings.Contains(v, "▌ · me  /Users/j/dev/me") {
 		t.Errorf("off the cursor the current row carries the sidebar's ▌ marker:\n%s", v)
 	}
-	if strings.Contains(v, "▌ ● suite2") || strings.Contains(v, "▌ $ recoder") {
+	if strings.Contains(v, "▌ ● web") || strings.Contains(v, "▌ $ recoder") {
 		t.Errorf("only the current session is marked:\n%s", v)
 	}
 	for _, line := range strings.Split(v, "\n") {
@@ -379,7 +379,7 @@ func TestPickerKeysLine(t *testing.T) {
 		lines := strings.Split(v, "\n")
 		return lines[len(lines)-1]
 	}
-	// rows: [restore-all, open me (here), open suite2, open recoder, sep, dir pier, dir suite3]
+	// rows: [restore-all, open me (here), open web, open recoder, sep, dir pier, dir web2]
 	if l := last(m.View()); !strings.Contains(l, "^A: agent") || !strings.Contains(l, "^T: telegram") || !strings.Contains(l, "Tab: name") || !strings.Contains(l, "Esc") {
 		t.Errorf("open row inside tmux creates, so Tab names: %q", l)
 	}

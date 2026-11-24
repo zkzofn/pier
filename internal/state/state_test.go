@@ -27,7 +27,7 @@ func TestRecordAndReadAll(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMUX_PANE", "%42")
 
-	payload := []byte(`{"session_id":"abc-123","cwd":"/dev/suite2","hook_event_name":"UserPromptSubmit","prompt":"fix the login bug"}`)
+	payload := []byte(`{"session_id":"abc-123","cwd":"/dev/web","hook_event_name":"UserPromptSubmit","prompt":"fix the login bug"}`)
 	if err := Record(dir, "user-prompt-submit", payload); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestRecordAndReadAll(t *testing.T) {
 	if !ok {
 		t.Fatalf("no state for %%42: %v", states)
 	}
-	if st.State != Working || st.SessionID != "abc-123" || st.CWD != "/dev/suite2" {
+	if st.State != Working || st.SessionID != "abc-123" || st.CWD != "/dev/web" {
 		t.Errorf("wrong state: %+v", st)
 	}
 	if st.LastPrompt != "fix the login bug" {

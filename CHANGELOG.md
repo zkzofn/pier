@@ -38,7 +38,7 @@ to 1.0.0.
   there, and `Tab` now names the new session on running-session rows too.
   So `prefix+N` `Enter` is "one more Claude Code here".
 - Names follow the directory on every row, `-2`, `-3`, … past taken ones: a
-  third agent in `~/dev/suite1` is `suite1-3`, never `suite1-2-2`.
+  third agent in `~/dev/api` is `api-3`, never `api-2-2`.
 - Fixed: since 1.0.0 the picker dropped the session it was opened from, which
   left no row for its directory at all — no way to open a terminal or a
   second agent where you already are.
