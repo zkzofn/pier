@@ -93,9 +93,14 @@ func Run(version, self string) error {
 	}
 	if prompt.IsTerminal() {
 		p := prompt.Std()
-		if _, ok := onboard.Load(onboard.ConfigPath()); !ok {
+		cfg, ok := onboard.Load(onboard.ConfigPath())
+		if !ok {
 			if err := onboard.Wizard(p, onboard.DefaultEnv(self)); err != nil {
 				fmt.Fprintln(os.Stderr, "pier: first-run wizard:", err)
+			}
+		} else if cfg.Agent == "" {
+			if err := onboard.EnsureAgent(p, onboard.DefaultEnv(self)); err != nil {
+				fmt.Fprintln(os.Stderr, "pier: default agent setup:", err)
 			}
 		}
 		if checkUpdate(p, version, self) {

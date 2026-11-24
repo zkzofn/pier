@@ -168,6 +168,11 @@ func Wizard(p *prompt.Prompter, env Env) error {
 		}
 	}
 	avail := agent.Available(nil, env.LookPath)
+	defAgent := pickDefaultAgent(p, avail)
+	return Save(env.ConfigPath, Config{Agent: defAgent})
+}
+
+func pickDefaultAgent(p *prompt.Prompter, avail []agent.Spec) string {
 	defAgent := avail[0].Name
 	if len(avail) > 1 {
 		names := make([]string, len(avail))
@@ -182,7 +187,23 @@ func Wizard(p *prompt.Prompter, env Env) error {
 			}
 		}
 	}
-	return Save(env.ConfigPath, Config{Agent: defAgent})
+	return defAgent
+}
+
+// EnsureAgent prompts once for a default agent when an existing config.json
+// has no Agent set yet (e.g. upgraded from a pre-multi-agent version),
+// preserving any existing Alias and custom Agents fields.
+func EnsureAgent(p *prompt.Prompter, env Env) error {
+	c, ok := Load(env.ConfigPath)
+	if !ok || c.Agent != "" {
+		return nil
+	}
+	avail := agent.Available(c.Agents, env.LookPath)
+	if len(avail) > 1 {
+		fmt.Fprintln(p.Out, "pier — choose default agent (change later with `pier agent <name>`)")
+	}
+	c.Agent = pickDefaultAgent(p, avail)
+	return Save(env.ConfigPath, c)
 }
 
 // ShowAgent prints the active default agent and all available agents on PATH.

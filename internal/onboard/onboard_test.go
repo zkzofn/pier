@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"pier/internal/agent"
 	"pier/internal/prompt"
 	"pier/internal/setup"
 )
@@ -209,5 +211,88 @@ func TestSetAndShowAlias(t *testing.T) {
 	ShowAlias(&out, env)
 	if !strings.Contains(out.String(), "none") {
 		t.Errorf("no block -> none, got %q", out.String())
+	}
+}
+
+func TestEnsureAgentPromptsWhenMissingAndPreservesFields(t *testing.T) {
+	env, _ := testEnv(t, true)
+	custom := []agent.Spec{{Name: "mybot", Cmd: "mybot-cli --fast"}}
+	if err := Save(env.ConfigPath, Config{Alias: "cl", Agents: custom}); err != nil {
+		t.Fatal(err)
+	}
+	env.LookPath = func(name string) (string, error) {
+		if name == "claude" || name == "agy" {
+			return "/usr/local/bin/" + name, nil
+		}
+		return "", errors.New("not found")
+	}
+	var out bytes.Buffer
+	if err := EnsureAgent(prompt.New(strings.NewReader("agy\n"), &out), env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "choose default agent") || !strings.Contains(out.String(), "default agent [claude/agy]") {
+		t.Errorf("expected default agent prompt, got %q", out.String())
+	}
+	c, ok := Load(env.ConfigPath)
+	if !ok || c.Agent != "agy" || c.Alias != "cl" || !slices.Equal(c.Agents, custom) {
+		t.Errorf("config not updated as expected: %+v ok=%v", c, ok)
+	}
+}
+
+func TestEnsureAgentAutoSavesSingleAgentWithoutPrompt(t *testing.T) {
+	env, _ := testEnv(t, true)
+	if err := Save(env.ConfigPath, Config{Alias: "cl"}); err != nil {
+		t.Fatal(err)
+	}
+	env.LookPath = func(name string) (string, error) {
+		if name == "claude" {
+			return "/usr/local/bin/claude", nil
+		}
+		return "", errors.New("not found")
+	}
+	var out bytes.Buffer
+	if err := EnsureAgent(prompt.New(strings.NewReader(""), &out), env); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no prompt when only one agent is available, got %q", out.String())
+	}
+	c, ok := Load(env.ConfigPath)
+	if !ok || c.Agent != "claude" || c.Alias != "cl" {
+		t.Errorf("config = %+v ok=%v, want Agent=claude Alias=cl", c, ok)
+	}
+}
+
+func TestEnsureAgentSkipsWhenAlreadySet(t *testing.T) {
+	env, _ := testEnv(t, true)
+	if err := Save(env.ConfigPath, Config{Alias: "cl", Agent: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	env.LookPath = func(name string) (string, error) {
+		return "/usr/local/bin/" + name, nil
+	}
+	var out bytes.Buffer
+	if err := EnsureAgent(prompt.New(strings.NewReader("agy\n"), &out), env); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no output when Agent is already set, got %q", out.String())
+	}
+	if c, ok := Load(env.ConfigPath); !ok || c.Agent != "claude" || c.Alias != "cl" {
+		t.Errorf("config unexpectedly modified: %+v ok=%v", c, ok)
+	}
+}
+
+func TestEnsureAgentSkipsWhenConfigMissing(t *testing.T) {
+	env, _ := testEnv(t, true)
+	var out bytes.Buffer
+	if err := EnsureAgent(prompt.New(strings.NewReader("agy\n"), &out), env); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("expected no output when config missing, got %q", out.String())
+	}
+	if _, err := os.Stat(env.ConfigPath); !os.IsNotExist(err) {
+		t.Errorf("EnsureAgent must not create missing config.json, stat err=%v", err)
 	}
 }
